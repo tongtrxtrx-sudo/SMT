@@ -89,6 +89,26 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertEqual(1, widget.attempt_table.rowCount())
         self.assertEqual([FeedbackTone.OK], self.audio.tones)
 
+    def test_completed_run_immediately_locks_scanning_and_keeps_terminal_state(self) -> None:
+        widget = self.make_widget([self.configuration])
+        widget.start_button.click()
+
+        self.scan(widget, "SMT-01")
+        self.scan(widget, "F-01")
+        self.scan(widget, "013000081")
+
+        self.assertFalse(widget.scan_input.isEnabled())
+        self.assertFalse(widget.submit_button.isEnabled())
+        self.assertEqual("", widget.scan_input.text())
+        self.assertEqual("全部对料完成", widget.feedback_label.text())
+
+        widget.scan_input.setText("STALE-SCAN")
+        widget.scan_input.returnPressed.emit()
+
+        self.assertEqual("", widget.scan_input.text())
+        self.assertEqual("全部对料完成", widget.feedback_label.text())
+        self.assertEqual(1, widget.attempt_table.rowCount())
+
     def test_ng_scan_shows_expected_and_scanned_material(self) -> None:
         widget = self.make_widget([self.configuration])
         widget.start_button.click()

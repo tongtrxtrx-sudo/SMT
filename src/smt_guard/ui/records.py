@@ -12,12 +12,12 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from smt_guard.records import Attempt
+from smt_guard.ui.tables import readable_item, set_column_widths
 
 
 class AttemptReader(Protocol):
@@ -92,6 +92,10 @@ class RecordQueryWidget(QWidget):
         self.record_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.record_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.record_table.verticalHeader().setVisible(False)
+        set_column_widths(
+            self.record_table,
+            (70, 190, 220, 120, 160, 130, 120, 220, 220, 80, 80),
+        )
         layout.addWidget(self.record_table, 1)
 
         self.status_label = QLabel("请输入运行编号")
@@ -156,7 +160,7 @@ class RecordQueryWidget(QWidget):
                 "是" if attempt.repeated else "否",
             )
             for column, value in enumerate(values):
-                self.record_table.setItem(row, column, QTableWidgetItem(value))
+                self.record_table.setItem(row, column, readable_item(value))
 
     def _show_success(self, message: str) -> None:
         self.status_label.setProperty("feedbackState", "success")

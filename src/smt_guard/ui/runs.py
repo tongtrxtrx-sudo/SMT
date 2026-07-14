@@ -13,12 +13,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from smt_guard.run import ProductionRun, RunStationState, RunStatus
+from smt_guard.ui.tables import readable_item, set_column_widths
 
 
 class ProductionRunReader(Protocol):
@@ -42,9 +42,7 @@ class ProductionRunManagementWidget(QWidget):
     resume_requested = Signal(str)
     interrupt_requested = Signal(str, str)
 
-    def __init__(
-        self, repository: ProductionRunReader, parent: QWidget | None = None
-    ) -> None:
+    def __init__(self, repository: ProductionRunReader, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._repository = repository
         self._runs: list[ProductionRun] = []
@@ -88,6 +86,10 @@ class ProductionRunManagementWidget(QWidget):
         self.run_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.run_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.run_table.verticalHeader().setVisible(False)
+        set_column_widths(
+            self.run_table,
+            (220, 120, 160, 110, 90, 80, 190, 190, 180),
+        )
         splitter.addWidget(self.run_table)
         right = QWidget()
         right_layout = QVBoxLayout(right)
@@ -99,6 +101,7 @@ class ProductionRunManagementWidget(QWidget):
             ("设备", "站位", "要求物料", "状态", "完成时间")
         )
         self.station_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        set_column_widths(self.station_table, (130, 120, 220, 90, 190))
         right_layout.addWidget(self.station_table, 1)
         splitter.addWidget(right)
         splitter.setSizes((750, 450))
@@ -158,13 +161,19 @@ class ProductionRunManagementWidget(QWidget):
                 run.interruption_reason,
             )
             for column, value in enumerate(values):
-                self.run_table.setItem(row, column, QTableWidgetItem(value))
+                self.run_table.setItem(row, column, readable_item(value))
         if self._runs:
             self.run_table.selectRow(0)
+            # Qt does not emit itemSelectionChanged when row 0 was already selected
+            # before the refresh.  Render explicitly so the snapshot and actions
+            # always describe the newly loaded first row.
+            self._render_selected()
             self._show_success(f"找到 {len(self._runs)} 个运行")
         else:
             self.snapshot_label.setText("没有匹配的生产运行")
             self.station_table.setRowCount(0)
+            self.resume_button.setEnabled(False)
+            self.interrupt_button.setEnabled(False)
             self.status_label.setText("没有匹配的生产运行")
 
     @Slot()
@@ -188,7 +197,7 @@ class ProductionRunManagementWidget(QWidget):
                 "" if state.completed_at is None else state.completed_at.isoformat(),
             )
             for column, value in enumerate(values):
-                self.station_table.setItem(row, column, QTableWidgetItem(value))
+                self.station_table.setItem(row, column, readable_item(value))
         self.resume_button.setEnabled(run.status is RunStatus.INTERRUPTED)
         self.interrupt_button.setEnabled(run.status is RunStatus.RUNNING)
 

@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Protocol
 
 from PySide6.QtCore import Slot
+from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -11,12 +12,12 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from smt_guard.audit import AuditEntry
+from smt_guard.ui.tables import readable_item, set_column_widths
 
 
 class AuditReader(Protocol):
@@ -42,7 +43,6 @@ class AuditLogWidget(QWidget):
         super().__init__(parent)
         self._repository = repository
         self._build_ui()
-        self.refresh()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -79,8 +79,9 @@ class AuditLogWidget(QWidget):
         self.audit_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.audit_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.audit_table.verticalHeader().setVisible(False)
+        set_column_widths(self.audit_table, (70, 190, 120, 240, 110, 120, 280, 280))
         layout.addWidget(self.audit_table, 1)
-        self.status_label = QLabel("就绪")
+        self.status_label = QLabel("尚未查询；打开本页后将自动加载最新审计日志")
         layout.addWidget(self.status_label)
         self.query_button.clicked.connect(self.refresh)
         self.entity_key_input.returnPressed.connect(self.refresh)
@@ -113,9 +114,14 @@ class AuditLogWidget(QWidget):
                 entry.after_json or "",
             )
             for column, value in enumerate(values):
-                self.audit_table.setItem(row, column, QTableWidgetItem(value))
+                self.audit_table.setItem(row, column, readable_item(value))
         self.status_label.setStyleSheet("color: #344054;")
-        self.status_label.setText(f"显示 {len(entries)} 条审计日志（最新优先）")
+        self.status_label.setText(f"查询完成：{len(entries)} 条审计日志（最新优先）")
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
+        """Reload append-only audit data whenever the tab becomes visible."""
+        super().showEvent(event)
+        self.refresh()
 
     @staticmethod
     def _parse_time(value: str) -> datetime | None:
