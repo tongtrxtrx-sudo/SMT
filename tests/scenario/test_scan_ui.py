@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from smt_guard.feedback import FeedbackTone
+from smt_guard.feedback import FeedbackTone, VoicePrompt
 from smt_guard.records import InMemoryAttemptRepository
 from smt_guard.scan import ProductConfiguration
 from smt_guard.ui.scanning import ScanWidget
@@ -28,6 +28,14 @@ class FakeAudioSink:
         self.tones.append(tone)
 
 
+class FakeAnnouncementSink:
+    def __init__(self) -> None:
+        self.prompts: list[VoicePrompt] = []
+
+    def announce(self, prompt: VoicePrompt) -> None:
+        self.prompts.append(prompt)
+
+
 class ScanWidgetTests(unittest.TestCase):
     app: QApplication
 
@@ -47,6 +55,7 @@ class ScanWidgetTests(unittest.TestCase):
         )
         self.repository = InMemoryAttemptRepository()
         self.audio = FakeAudioSink()
+        self.announcements = FakeAnnouncementSink()
 
     def make_widget(self, configurations: list[ProductConfiguration]) -> ScanWidget:
         widget = ScanWidget(
@@ -55,6 +64,7 @@ class ScanWidgetTests(unittest.TestCase):
             self.audio,
             clock=lambda: datetime(2026, 7, 11, 12, 0, tzinfo=UTC),
             run_id_factory=lambda: "RUN-1",
+            announcer=self.announcements,
         )
         self.addCleanup(widget.close)
         return widget
@@ -73,6 +83,7 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertIn("RUN-1", widget.run_label.text())
         self.assertTrue(widget.scan_input.isEnabled())
         self.assertIn("设备", widget.feedback_label.text())
+        self.assertEqual([VoicePrompt.RUN_STARTED], self.announcements.prompts)
 
     def test_ok_scan_flow_updates_prompt_progress_and_history(self) -> None:
         widget = self.make_widget([self.configuration])
@@ -88,6 +99,10 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertEqual(1, widget.progress_bar.value())
         self.assertEqual(1, widget.attempt_table.rowCount())
         self.assertEqual([FeedbackTone.OK], self.audio.tones)
+        self.assertEqual(
+            [VoicePrompt.RUN_STARTED, VoicePrompt.RUN_COMPLETED],
+            self.announcements.prompts,
+        )
 
     def test_completed_run_immediately_locks_scanning_and_keeps_terminal_state(self) -> None:
         widget = self.make_widget([self.configuration])
@@ -122,6 +137,10 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertIn("999999999", widget.scanned_label.text())
         self.assertEqual(0, widget.progress_bar.value())
         self.assertEqual(1, widget.attempt_table.rowCount())
+        self.assertEqual(
+            [VoicePrompt.RUN_STARTED, VoicePrompt.MATERIAL_NG],
+            self.announcements.prompts,
+        )
 
     def test_explains_empty_configuration_state(self) -> None:
         widget = self.make_widget([])
@@ -130,6 +149,41 @@ class ScanWidgetTests(unittest.TestCase):
 
         self.assertFalse(widget.scan_input.isEnabled())
         self.assertIn("导入", widget.feedback_label.text())
+
+    def test_invalid_scan_and_run_replacement_prioritize_latest_prompt(self) -> None:
+        widget = self.make_widget([self.configuration])
+        widget.start_button.click()
+        self.scan(widget, "WRONG-DEVICE")
+        widget.start_button.click()
+
+        self.assertEqual(
+            [
+                VoicePrompt.RUN_STARTED,
+                VoicePrompt.SCAN_REJECTED,
+                VoicePrompt.RUN_REPLACED,
+            ],
+            self.announcements.prompts,
+        )
+
+    def test_non_terminal_ok_scan_uses_material_ok_prompt(self) -> None:
+        configuration = ProductConfiguration(
+            "501000087",
+            "V2",
+            {
+                ("SMT-01", "F-01"): "013000081",
+                ("SMT-01", "F-02"): "005000103",
+            },
+        )
+        widget = self.make_widget([configuration])
+        widget.start_button.click()
+        self.scan(widget, "SMT-01")
+        self.scan(widget, "F-01")
+        self.scan(widget, "013000081")
+
+        self.assertEqual(
+            [VoicePrompt.RUN_STARTED, VoicePrompt.MATERIAL_OK],
+            self.announcements.prompts,
+        )
 
 
 if __name__ == "__main__":

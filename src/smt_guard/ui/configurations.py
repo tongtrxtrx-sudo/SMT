@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from smt_guard.configuration import ConfigurationStatus, ProductConfigurationRecord
+from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.scan import ProductConfiguration
 from smt_guard.ui.tables import readable_item, set_column_widths
 
@@ -61,10 +62,13 @@ class ConfigurationManagementWidget(QWidget):
         repository: ConfigurationRepository,
         operator_provider: Callable[[], str],
         parent: QWidget | None = None,
+        *,
+        announcer: AnnouncementSink | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._operator_provider = operator_provider
+        self._announcer = announcer or SilentAnnouncementSink()
         self._records: list[ProductConfigurationRecord] = []
         self._build_ui()
         self.refresh()
@@ -276,6 +280,7 @@ class ConfigurationManagementWidget(QWidget):
         record = self._selected()
         if record is None:
             self._show_error("请先选择产品配置")
+            self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
             return
         new_version = self.new_version_input.text().strip()
         if not new_version:
@@ -291,6 +296,7 @@ class ConfigurationManagementWidget(QWidget):
             )
         except (LookupError, ValueError) as error:
             self._show_error(str(error))
+            self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
             return
         self.new_version_input.clear()
         self.refresh()
@@ -302,6 +308,7 @@ class ConfigurationManagementWidget(QWidget):
         record = self._selected()
         if record is None:
             self._show_error("请先选择产品配置")
+            self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
             return
         configuration = record.configuration
         try:
@@ -312,10 +319,19 @@ class ConfigurationManagementWidget(QWidget):
             )
         except (LookupError, ValueError) as error:
             self._show_error(str(error))
+            self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
             return
         self.refresh()
         self._select_configuration(configuration.product_code, configuration.version)
         self._show_success(f"{success} {configuration.product_code}/{configuration.version}")
+        self._announcer.announce(
+            {
+                "publish": VoicePrompt.CONFIGURATION_PUBLISHED,
+                "activate": VoicePrompt.CONFIGURATION_ACTIVATED,
+                "disable": VoicePrompt.CONFIGURATION_DISABLED,
+                "archive": VoicePrompt.CONFIGURATION_ARCHIVED,
+            }[operation]
+        )
         self.configurations_changed.emit()
 
     def _select_configuration(self, product_code: str, version: str) -> None:

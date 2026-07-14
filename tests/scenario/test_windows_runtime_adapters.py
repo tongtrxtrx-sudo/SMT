@@ -3,8 +3,13 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 
-from smt_guard.feedback import FeedbackTone
-from smt_guard.platform import RunIdGenerator, WindowsAudioSink, default_data_dir
+from smt_guard.feedback import FeedbackTone, VoicePrompt
+from smt_guard.platform import (
+    RunIdGenerator,
+    WindowsAudioSink,
+    WindowsSpeechSink,
+    default_data_dir,
+)
 
 
 class WindowsRuntimeAdapterTests(unittest.TestCase):
@@ -41,6 +46,34 @@ class WindowsRuntimeAdapterTests(unittest.TestCase):
 
         self.assertEqual([WindowsAudioSink.OK_BEEP, WindowsAudioSink.NG_BEEP], beep_kinds)
         self.assertNotEqual(WindowsAudioSink.OK_BEEP, WindowsAudioSink.NG_BEEP)
+
+    def test_speech_stops_previous_prompt_before_speaking_latest_fixed_phrase(self) -> None:
+        events: list[tuple[str, str]] = []
+        speech = WindowsSpeechSink(
+            lambda phrase: events.append(("say", phrase)),
+            stopper=lambda: events.append(("stop", "")),
+        )
+
+        speech.announce(VoicePrompt.MATERIAL_OK)
+        speech.announce(VoicePrompt.MATERIAL_NG)
+
+        self.assertEqual(
+            [
+                ("stop", ""),
+                ("say", VoicePrompt.MATERIAL_OK.value),
+                ("stop", ""),
+                ("say", VoicePrompt.MATERIAL_NG.value),
+            ],
+            events,
+        )
+
+    def test_speech_failures_never_escape_into_the_business_operation(self) -> None:
+        def fail() -> None:
+            raise RuntimeError("speech unavailable")
+
+        speech = WindowsSpeechSink(lambda _phrase: fail(), stopper=fail)
+
+        speech.announce(VoicePrompt.RUN_STARTED)
 
     def test_declares_project_script_entry_point(self) -> None:
         project_root = Path(__file__).resolve().parents[2]

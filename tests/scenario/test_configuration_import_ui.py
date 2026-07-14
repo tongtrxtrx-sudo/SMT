@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication
 
 from smt_guard.bom import BomDocument, Material, Product
 from smt_guard.configuration import ImportValidationError
+from smt_guard.feedback import VoicePrompt
 from smt_guard.importing import ImportResult
 from smt_guard.scan import ProductConfiguration
 from smt_guard.ui.importing import ConfigurationImportWidget
@@ -50,6 +51,14 @@ class FakeImportWorkflow:
         return self.result
 
 
+class FakeAnnouncementSink:
+    def __init__(self) -> None:
+        self.prompts: list[VoicePrompt] = []
+
+    def announce(self, prompt: VoicePrompt) -> None:
+        self.prompts.append(prompt)
+
+
 class ConfigurationImportWidgetTests(unittest.TestCase):
     app: QApplication
 
@@ -63,8 +72,12 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
         else:
             raise RuntimeError("A non-GUI Qt application already exists")
 
-    def make_widget(self, workflow: FakeImportWorkflow) -> ConfigurationImportWidget:
-        widget = ConfigurationImportWidget(workflow)
+    def make_widget(
+        self,
+        workflow: FakeImportWorkflow,
+        announcer: FakeAnnouncementSink | None = None,
+    ) -> ConfigurationImportWidget:
+        widget = ConfigurationImportWidget(workflow, announcer=announcer)
         self.addCleanup(widget.close)
         return widget
 
@@ -76,7 +89,8 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
 
     def test_executes_import_and_previews_result(self) -> None:
         workflow = FakeImportWorkflow(result=sample_result())
-        widget = self.make_widget(workflow)
+        announcer = FakeAnnouncementSink()
+        widget = self.make_widget(workflow, announcer)
         self.fill_required_inputs(widget)
 
         widget.bom_import_button.click()
@@ -96,10 +110,15 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
         assert material_item is not None
         self.assertEqual("013000081", material_item.text())
         self.assertEqual("success", widget.status_label.property("feedbackState"))
+        self.assertEqual(
+            [VoicePrompt.BOM_IMPORTED, VoicePrompt.CONFIGURATION_IMPORTED],
+            announcer.prompts,
+        )
 
     def test_displays_workflow_error_without_modal_dialog(self) -> None:
         workflow = FakeImportWorkflow(error=ImportValidationError("Row 7: unknown material"))
-        widget = self.make_widget(workflow)
+        announcer = FakeAnnouncementSink()
+        widget = self.make_widget(workflow, announcer)
         self.fill_required_inputs(widget)
 
         widget.bom_import_button.click()
@@ -107,6 +126,7 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
 
         self.assertIn("Row 7", widget.status_label.text())
         self.assertEqual("error", widget.status_label.property("feedbackState"))
+        self.assertEqual([VoicePrompt.IMPORT_FAILED], announcer.prompts)
 
     def test_translates_wrong_import_order_into_operator_guidance(self) -> None:
         workflow = FakeImportWorkflow(
@@ -122,13 +142,15 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
 
     def test_rejects_blank_required_input_before_calling_workflow(self) -> None:
         workflow = FakeImportWorkflow(result=sample_result())
-        widget = self.make_widget(workflow)
+        announcer = FakeAnnouncementSink()
+        widget = self.make_widget(workflow, announcer)
         widget.bom_path_input.clear()
 
         widget.bom_import_button.click()
 
         self.assertEqual([], workflow.calls)
         self.assertIn("BOM", widget.status_label.text())
+        self.assertEqual([VoicePrompt.IMPORT_FAILED], announcer.prompts)
 
 
 if __name__ == "__main__":

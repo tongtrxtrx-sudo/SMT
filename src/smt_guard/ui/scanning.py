@@ -20,7 +20,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from smt_guard.feedback import AudioSink, FeedbackState, VisualIntent
+from smt_guard.feedback import (
+    AnnouncementSink,
+    AudioSink,
+    FeedbackState,
+    SilentAnnouncementSink,
+    VisualIntent,
+    VoicePrompt,
+)
 from smt_guard.records import Attempt
 from smt_guard.run import AttemptSink, ProductionRun, RunPersistence, VerificationRun
 from smt_guard.scan import ProductConfiguration
@@ -66,6 +73,7 @@ class ScanWidget(QWidget):
         runs: RunManagementPersistence | None = None,
         operator: str = "SYSTEM",
         operator_provider: Callable[[], str] | None = None,
+        announcer: AnnouncementSink | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -77,6 +85,7 @@ class ScanWidget(QWidget):
         self._runs = runs
         self._operator = operator.strip() or "SYSTEM"
         self._operator_provider = operator_provider
+        self._announcer = announcer or SilentAnnouncementSink()
         self._configurations: list[ProductConfiguration] = []
         self._run: VerificationRun | None = None
         self._build_ui()
@@ -155,8 +164,10 @@ class ScanWidget(QWidget):
         except ValueError as error:
             self._show_message(str(error), "error")
             return
-        if self._run is not None and not self._run.completed:
-            self._run.interrupt("开始新的生产运行")
+        previous_run = self._run
+        replaced_running = previous_run is not None and not previous_run.completed
+        if replaced_running and previous_run is not None:
+            previous_run.interrupt("开始新的生产运行")
         self._run = VerificationRun(
             self._run_id_factory(),
             configuration,
@@ -173,6 +184,9 @@ class ScanWidget(QWidget):
         self.progress_bar.setValue(0)
         self.attempt_table.setRowCount(0)
         self._render_feedback(self._run.initial_feedback)
+        self._announcer.announce(
+            VoicePrompt.RUN_REPLACED if replaced_running else VoicePrompt.RUN_STARTED
+        )
         self.run_changed.emit()
         QTimer.singleShot(0, self.focus_scanner)
 
@@ -182,6 +196,8 @@ class ScanWidget(QWidget):
             self._run.interrupt(reason)
             self._run = None
             self._set_scan_controls_enabled(False)
+            if reason != "应用关闭":
+                self._announcer.announce(VoicePrompt.RUN_INTERRUPTED)
             self.run_changed.emit()
 
     def resume_run(self, run_id: str) -> None:
@@ -214,6 +230,7 @@ class ScanWidget(QWidget):
         self.progress_bar.setRange(0, len(configuration.assignments))
         self._refresh_attempts()
         self._render_feedback(self._run.initial_feedback)
+        self._announcer.announce(VoicePrompt.RUN_RESUMED)
         self.run_changed.emit()
         QTimer.singleShot(0, self.focus_scanner)
 
@@ -239,6 +256,7 @@ class ScanWidget(QWidget):
             self._show_message(str(error), "error")
             return
         self._show_message(f"已中断运行 {run_id}", "neutral")
+        self._announcer.announce(VoicePrompt.RUN_INTERRUPTED)
         self.run_changed.emit()
 
     @Slot()
@@ -251,6 +269,7 @@ class ScanWidget(QWidget):
     def _submit_scan(self) -> None:
         if self._run is None:
             self._show_message("请先开始运行", "error")
+            self._announcer.announce(VoicePrompt.SCAN_REJECTED)
             return
         if self._run.completed:
             self._set_scan_controls_enabled(False)
@@ -259,11 +278,20 @@ class ScanWidget(QWidget):
         code = self.scan_input.text().strip()
         if not code:
             self._show_message("扫码内容不能为空", "error")
+            self._announcer.announce(VoicePrompt.SCAN_REJECTED)
             return
         update = self._run.handle_scan(code)
         self.scan_input.clear()
         self._render_feedback(update.feedback)
+        if not update.outcome.accepted:
+            self._announcer.announce(VoicePrompt.SCAN_REJECTED)
         if update.attempt is not None:
+            if update.feedback.complete:
+                self._announcer.announce(VoicePrompt.RUN_COMPLETED)
+            elif update.feedback.intent is VisualIntent.OK:
+                self._announcer.announce(VoicePrompt.MATERIAL_OK)
+            else:
+                self._announcer.announce(VoicePrompt.MATERIAL_NG)
             self._refresh_attempts()
             self.run_changed.emit()
 

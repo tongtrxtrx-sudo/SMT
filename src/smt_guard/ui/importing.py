@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from smt_guard.bom import BomDocument
+from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.importing import ImportResult
 from smt_guard.ui.errors import operator_error_message
 from smt_guard.ui.tables import readable_item, set_column_widths
@@ -51,9 +52,12 @@ class ConfigurationImportWidget(QWidget):
         self,
         workflow: ConfigurationImportWorkflow,
         parent: QWidget | None = None,
+        *,
+        announcer: AnnouncementSink | None = None,
     ) -> None:
         super().__init__(parent)
         self._workflow = workflow
+        self._announcer = announcer or SilentAnnouncementSink()
         self._build_ui()
         self._connect_signals()
 
@@ -144,10 +148,12 @@ class ConfigurationImportWidget(QWidget):
                 document = self._workflow.import_bom(bom_path)
         except (OSError, ValueError) as error:
             self._show_error(operator_error_message(error))
+            self._announcer.announce(VoicePrompt.IMPORT_FAILED)
             return
 
         self._preview_bom(document)
         self._show_success(f"BOM 产品 {document.product.material_code} 导入成功")
+        self._announcer.announce(VoicePrompt.BOM_IMPORTED)
         self.bom_imported.emit()
 
     @Slot()
@@ -163,12 +169,14 @@ class ConfigurationImportWidget(QWidget):
             )
         except (OSError, ValueError) as error:
             self._show_error(operator_error_message(error))
+            self._announcer.announce(VoicePrompt.IMPORT_FAILED)
             return
 
         self._preview(result)
         self._show_success(
             f"产品 {result.configuration.product_code}/{result.configuration.version} 导入成功"
         )
+        self._announcer.announce(VoicePrompt.CONFIGURATION_IMPORTED)
         self.import_completed.emit()
 
     def _preview_bom(self, document: BomDocument) -> None:

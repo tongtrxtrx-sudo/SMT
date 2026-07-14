@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from smt_guard.bom import BomVersion
+from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.ui.errors import operator_error_message
 from smt_guard.ui.tables import readable_item, set_column_widths
 
@@ -47,10 +48,13 @@ class BomManagementWidget(QWidget):
         repository: BomRepository,
         operator_provider: Callable[[], str],
         parent: QWidget | None = None,
+        *,
+        announcer: AnnouncementSink | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._operator_provider = operator_provider
+        self._announcer = announcer or SilentAnnouncementSink()
         self._versions: list[BomVersion] = []
         self._build_ui()
         self.refresh()
@@ -195,6 +199,7 @@ class BomManagementWidget(QWidget):
         version = self._selected()
         if version is None:
             self._show_error("请先选择 BOM 版本")
+            self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
             return
         product = version.document.product.material_code
         try:
@@ -203,9 +208,18 @@ class BomManagementWidget(QWidget):
             )
         except (LookupError, ValueError) as error:
             self._show_error(operator_error_message(error))
+            self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
             return
         self.refresh()
         self._show_success(f"{success} {product}/{version.version}")
+        self._announcer.announce(
+            {
+                "publish": VoicePrompt.BOM_PUBLISHED,
+                "activate": VoicePrompt.BOM_ACTIVATED,
+                "obsolete": VoicePrompt.BOM_OBSOLETED,
+                "archive": VoicePrompt.BOM_ARCHIVED,
+            }[operation]
+        )
         self.bom_changed.emit()
 
     @Slot()

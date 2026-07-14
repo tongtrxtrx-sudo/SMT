@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.records import Attempt
 from smt_guard.ui.tables import readable_item, set_column_widths
 
@@ -58,10 +59,13 @@ class RecordQueryWidget(QWidget):
         repository: AttemptReader,
         exporter: RunExporter,
         parent: QWidget | None = None,
+        *,
+        announcer: AnnouncementSink | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._exporter = exporter
+        self._announcer = announcer or SilentAnnouncementSink()
         self._build_ui()
         self._connect_signals()
 
@@ -140,8 +144,10 @@ class RecordQueryWidget(QWidget):
             self._exporter.export_run(run_id, path)
         except (OSError, ValueError) as error:
             self._show_error(str(error))
+            self._announcer.announce(VoicePrompt.EXPORT_FAILED)
             return
         self._show_success(f"已导出运行 {run_id} 到 {path}")
+        self._announcer.announce(VoicePrompt.RECORDS_EXPORTED)
 
     def _render_records(self, records: list[Attempt]) -> None:
         self.record_table.setRowCount(len(records))

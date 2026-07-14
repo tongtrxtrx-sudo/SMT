@@ -2,11 +2,12 @@
 
 import os
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from smt_guard.feedback import FeedbackTone
+from smt_guard.feedback import FeedbackTone, VoicePrompt
 
 
 def default_data_dir(
@@ -67,3 +68,25 @@ class WindowsAudioSink:
     def emit(self, tone: FeedbackTone) -> None:
         kind = self.OK_BEEP if tone is FeedbackTone.OK else self.NG_BEEP
         self._beeper(kind)
+
+
+class WindowsSpeechSink:
+    """Speak fixed Chinese prompts through a non-blocking Qt speech engine."""
+
+    def __init__(
+        self,
+        speaker: Callable[[str], object],
+        *,
+        stopper: Callable[[], object] | None = None,
+        engine_owner: object | None = None,
+    ) -> None:
+        self._speaker = speaker
+        self._stopper = stopper
+        self._engine_owner = engine_owner
+
+    def announce(self, prompt: VoicePrompt) -> None:
+        if self._stopper is not None:
+            with suppress(Exception):
+                self._stopper()
+        with suppress(Exception):
+            self._speaker(prompt.value)

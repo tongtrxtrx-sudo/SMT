@@ -14,7 +14,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from smt_guard.app import ApplicationRuntime, create_runtime
-from smt_guard.feedback import FeedbackTone
+from smt_guard.feedback import FeedbackTone, VoicePrompt
 from smt_guard.scan import ProductConfiguration
 from smt_guard.ui.operator import OperatorSessionWidget
 from smt_guard.ui.records import RecordQueryWidget
@@ -26,6 +26,14 @@ class FakeAudioSink:
 
     def emit(self, tone: FeedbackTone) -> None:
         self.tones.append(tone)
+
+
+class FakeAnnouncementSink:
+    def __init__(self) -> None:
+        self.prompts: list[VoicePrompt] = []
+
+    def announce(self, prompt: VoicePrompt) -> None:
+        self.prompts.append(prompt)
 
 
 class ApplicationCompositionTests(unittest.TestCase):
@@ -45,6 +53,7 @@ class ApplicationCompositionTests(unittest.TestCase):
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.data_directory = Path(temporary.name)
+        self.announcements = FakeAnnouncementSink()
         self.runtime = self.create_runtime()
         self.addCleanup(self.runtime.close)
 
@@ -52,6 +61,7 @@ class ApplicationCompositionTests(unittest.TestCase):
         return create_runtime(
             self.data_directory,
             audio=FakeAudioSink(),
+            announcements=self.announcements,
             clock=lambda: datetime(2026, 7, 11, 12, 15, tzinfo=UTC),
             run_id_factory=lambda: "RUN-1",
         )
@@ -204,6 +214,17 @@ class ApplicationCompositionTests(unittest.TestCase):
         self.assertEqual(("OP-01",), provenance)
         self.assertEqual(("OP-01",), configuration_actor)
         self.assertEqual(("OP-01",), run_actor)
+        self.assertEqual(
+            [
+                VoicePrompt.BOM_IMPORTED,
+                VoicePrompt.CONFIGURATION_IMPORTED,
+                VoicePrompt.RUN_STARTED,
+                VoicePrompt.MATERIAL_NG,
+                VoicePrompt.RUN_COMPLETED,
+                VoicePrompt.RECORDS_EXPORTED,
+            ],
+            self.announcements.prompts,
+        )
 
     def test_operator_control_rejects_blank_and_updates_shared_session(self) -> None:
         control = self.runtime.window.findChild(OperatorSessionWidget)
@@ -216,6 +237,7 @@ class ApplicationCompositionTests(unittest.TestCase):
         control.sign_in_button.click()
 
         self.assertEqual("OP-02", self.runtime.operator_session.require())
+        self.assertEqual([VoicePrompt.OPERATOR_CONFIRMED], self.announcements.prompts)
 
 
 if __name__ == "__main__":

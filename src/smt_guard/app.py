@@ -1,18 +1,31 @@
 """Application composition root and visible Windows entry point."""
 
+import os
 import sqlite3
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from PySide6.QtCore import QLocale
+from PySide6.QtTextToSpeech import QTextToSpeech
 from PySide6.QtWidgets import QApplication
 
 from smt_guard.exporter import CsvRecordExporter
-from smt_guard.feedback import AudioSink, FeedbackTone
+from smt_guard.feedback import (
+    AnnouncementSink,
+    AudioSink,
+    FeedbackTone,
+    SilentAnnouncementSink,
+)
 from smt_guard.importing import ConfigurationImportService
 from smt_guard.operator import OperatorSession
-from smt_guard.platform import RunIdGenerator, WindowsAudioSink, default_data_dir
+from smt_guard.platform import (
+    RunIdGenerator,
+    WindowsAudioSink,
+    WindowsSpeechSink,
+    default_data_dir,
+)
 from smt_guard.sqlite import (
     SqliteAuditRepository,
     SqliteBomRepository,
@@ -78,6 +91,7 @@ def create_runtime(
     data_directory: Path,
     *,
     audio: AudioSink,
+    announcements: AnnouncementSink | None = None,
     clock: Callable[[], datetime],
     run_id_factory: Callable[[], str],
 ) -> ApplicationRuntime:
@@ -100,11 +114,12 @@ def create_runtime(
             operator_provider=operator_session.require,
         )
 
-        operator_widget = OperatorSessionWidget(operator_session)
+        announcer = announcements or SilentAnnouncementSink()
+        operator_widget = OperatorSessionWidget(operator_session, announcer=announcer)
         master_data_widget = DeviceStationWidget(
             master_data, operator_provider=operator_session.require
         )
-        import_widget = ConfigurationImportWidget(import_service)
+        import_widget = ConfigurationImportWidget(import_service, announcer=announcer)
         scan_widget = ScanWidget(
             configurations,
             runs,
@@ -113,13 +128,18 @@ def create_runtime(
             run_id_factory=run_id_factory,
             runs=runs,
             operator_provider=operator_session.require,
+            announcer=announcer,
         )
-        bom_widget = BomManagementWidget(boms, operator_session.require)
+        bom_widget = BomManagementWidget(
+            boms, operator_session.require, announcer=announcer
+        )
         configuration_widget = ConfigurationManagementWidget(
-            configurations, operator_session.require
+            configurations, operator_session.require, announcer=announcer
         )
         run_widget = ProductionRunManagementWidget(runs)
-        records_widget = RecordQueryWidget(runs, CsvRecordExporter(runs))
+        records_widget = RecordQueryWidget(
+            runs, CsvRecordExporter(runs), announcer=announcer
+        )
         audit_widget = AuditLogWidget(audits)
         import_widget.import_completed.connect(scan_widget.refresh_configurations)
         import_widget.import_completed.connect(configuration_widget.refresh)
@@ -149,6 +169,7 @@ def create_runtime(
 
         run_widget.resume_requested.connect(resume_run)
         run_widget.interrupt_requested.connect(scan_widget.interrupt_run)
+
         def operator_changed(_operator: str) -> None:
             scan_widget.interrupt_active_run("切换操作员")
 
@@ -182,6 +203,49 @@ class _SilentAudioSink:
         del tone
 
 
+def _voice_announcements_enabled(environ: Mapping[str, str]) -> bool:
+    value = environ.get("SMT_GUARD_VOICE_ENABLED", "1").strip().casefold()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _create_chinese_speech_engine(engine_name: str) -> QTextToSpeech | None:
+    try:
+        engine = QTextToSpeech(engine_name)
+        engine.setLocale(QLocale("zh_CN"))
+        chinese_voice = next(
+            (
+                voice
+                for voice in engine.availableVoices()
+                if voice.locale().language() == QLocale.Language.Chinese
+            ),
+            None,
+        )
+        if chinese_voice is None:
+            return None
+        engine.setVoice(chinese_voice)
+        engine.setRate(-0.1)
+        engine.setVolume(1.0)
+    except Exception:
+        return None
+    return engine
+
+
+def _create_windows_announcer() -> AnnouncementSink:
+    """Prefer the installed Chinese Windows voice without blocking the UI thread."""
+    try:
+        available_engines = QTextToSpeech.availableEngines()
+    except Exception:
+        return SilentAnnouncementSink()
+    for engine_name in ("sapi", "winrt"):
+        if engine_name not in available_engines:
+            continue
+        engine = _create_chinese_speech_engine(engine_name)
+        if engine is None:
+            continue
+        return WindowsSpeechSink(engine.say, stopper=engine.stop, engine_owner=engine)
+    return SilentAnnouncementSink()
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -201,9 +265,17 @@ def main(
         raise RuntimeError("A non-GUI Qt application already exists")
 
     clock = _utc_now
+    effective_environment = dict(environ) if environ is not None else dict(os.environ)
+    audio: AudioSink = _SilentAudioSink() if smoke_test else WindowsAudioSink()
+    announcer = (
+        SilentAnnouncementSink()
+        if smoke_test or not _voice_announcements_enabled(effective_environment)
+        else _create_windows_announcer()
+    )
     runtime = create_runtime(
         default_data_dir(environ=environ),
-        audio=_SilentAudioSink() if smoke_test else WindowsAudioSink(),
+        audio=audio,
+        announcements=announcer,
         clock=clock,
         run_id_factory=RunIdGenerator(clock=clock),
     )

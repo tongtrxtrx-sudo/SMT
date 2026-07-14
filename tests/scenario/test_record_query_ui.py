@@ -10,6 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from smt_guard.exporter import CsvRecordExporter
+from smt_guard.feedback import VoicePrompt
 from smt_guard.records import Attempt, InMemoryAttemptRepository
 from smt_guard.ui.records import RecordQueryWidget
 from smt_guard.verification import VerificationResult
@@ -31,6 +32,14 @@ def make_attempt(run_id: str, station_code: str) -> Attempt:
     )
 
 
+class FakeAnnouncementSink:
+    def __init__(self) -> None:
+        self.prompts: list[VoicePrompt] = []
+
+    def announce(self, prompt: VoicePrompt) -> None:
+        self.prompts.append(prompt)
+
+
 class RecordQueryWidgetTests(unittest.TestCase):
     app: QApplication
 
@@ -49,9 +58,11 @@ class RecordQueryWidgetTests(unittest.TestCase):
         self.repository.append(make_attempt("RUN-1", "F-01"))
         self.repository.append(make_attempt("RUN-1", "F-02"))
         self.repository.append(make_attempt("RUN-2", "R-01"))
+        self.announcements = FakeAnnouncementSink()
         self.widget = RecordQueryWidget(
             self.repository,
             CsvRecordExporter(self.repository),
+            announcer=self.announcements,
         )
         self.addCleanup(self.widget.close)
 
@@ -93,6 +104,16 @@ class RecordQueryWidgetTests(unittest.TestCase):
         self.assertEqual(2, len(rows))
         self.assertEqual({"RUN-1"}, {row["运行编号"] for row in rows})
         self.assertIn("导出", self.widget.status_label.text())
+        self.assertEqual([VoicePrompt.RECORDS_EXPORTED], self.announcements.prompts)
+
+    def test_export_failure_announces_fixed_failure_prompt(self) -> None:
+        self.widget.run_id_input.setText("RUN-1")
+        self.widget.export_path_input.clear()
+
+        self.widget.export_button.click()
+
+        self.assertEqual([VoicePrompt.EXPORT_FAILED], self.announcements.prompts)
+        self.assertIn("导出路径", self.widget.status_label.text())
 
 
 if __name__ == "__main__":

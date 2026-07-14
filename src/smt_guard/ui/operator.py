@@ -3,6 +3,7 @@
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QWidget
 
+from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.operator import OperatorSession
 
 
@@ -11,9 +12,16 @@ class OperatorSessionWidget(QWidget):
 
     operator_changed = Signal(str)
 
-    def __init__(self, session: OperatorSession, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        session: OperatorSession,
+        parent: QWidget | None = None,
+        *,
+        announcer: AnnouncementSink | None = None,
+    ) -> None:
         super().__init__(parent)
         self._session = session
+        self._announcer = announcer or SilentAnnouncementSink()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.addWidget(QLabel("当前操作员"))
@@ -41,6 +49,7 @@ class OperatorSessionWidget(QWidget):
         self.current_label.setText(self._label_text())
         self.status_label.setStyleSheet("color: #18794e;")
         self.status_label.setText("操作员已确认")
+        self._announcer.announce(VoicePrompt.OPERATOR_CONFIRMED)
         self.operator_changed.emit(operator)
 
     def _label_text(self) -> str:

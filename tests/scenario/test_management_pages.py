@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from smt_guard.bom import BomDocument, Material, Product
-from smt_guard.feedback import FeedbackTone
+from smt_guard.feedback import FeedbackTone, VoicePrompt
 from smt_guard.operator import OperatorSession
 from smt_guard.run import RunStatus
 from smt_guard.scan import ProductConfiguration
@@ -32,6 +32,14 @@ from smt_guard.ui.scanning import ScanWidget
 class SilentAudio:
     def emit(self, tone: FeedbackTone) -> None:
         del tone
+
+
+class FakeAnnouncementSink:
+    def __init__(self) -> None:
+        self.prompts: list[VoicePrompt] = []
+
+    def announce(self, prompt: VoicePrompt) -> None:
+        self.prompts.append(prompt)
 
 
 class ManagementPageTests(unittest.TestCase):
@@ -80,7 +88,12 @@ class ManagementPageTests(unittest.TestCase):
     def test_bom_page_shows_provenance_compares_and_runs_lifecycle(self) -> None:
         self.import_bom("V1", "M-1")
         self.import_bom("V2", "M-2")
-        widget = BomManagementWidget(SqliteBomRepository(self.connection), self.session.require)
+        announcer = FakeAnnouncementSink()
+        widget = BomManagementWidget(
+            SqliteBomRepository(self.connection),
+            self.session.require,
+            announcer=announcer,
+        )
         self.addCleanup(widget.close)
 
         self.assertEqual(2, widget.version_table.rowCount())
@@ -98,10 +111,20 @@ class ManagementPageTests(unittest.TestCase):
         widget.obsolete_button.click()
         widget.archive_button.click()
         self.assertIn("已归档", widget.status_label.text())
+        self.assertEqual(
+            [
+                VoicePrompt.BOM_PUBLISHED,
+                VoicePrompt.BOM_ACTIVATED,
+                VoicePrompt.BOM_OBSOLETED,
+                VoicePrompt.BOM_ARCHIVED,
+            ],
+            announcer.prompts,
+        )
 
         widget.activate_button.click()
         self.assertIn("启用前必须先发布 BOM", widget.status_label.text())
         self.assertNotIn("must be published", widget.status_label.text())
+        self.assertEqual(VoicePrompt.LIFECYCLE_FAILED, announcer.prompts[-1])
 
     def test_configuration_page_copies_edits_and_releases_new_version(self) -> None:
         repository = SqliteProductConfigurationRepository(self.connection)
@@ -109,7 +132,10 @@ class ManagementPageTests(unittest.TestCase):
             ProductConfiguration("501000087", "V1", {("SMT-01", "F-01"): "M-1"}),
             actor="OP-UI",
         )
-        widget = ConfigurationManagementWidget(repository, self.session.require)
+        announcer = FakeAnnouncementSink()
+        widget = ConfigurationManagementWidget(
+            repository, self.session.require, announcer=announcer
+        )
         self.addCleanup(widget.close)
         version_item = widget.configuration_table.item(0, 1)
         assert version_item is not None
@@ -124,9 +150,20 @@ class ManagementPageTests(unittest.TestCase):
         widget.save_draft_button.click()
         widget.publish_button.click()
         widget.activate_button.click()
+        widget.disable_button.click()
+        widget.archive_button.click()
         self.assertEqual(
             "M-2",
             repository.get("501000087", "V2").required_material("SMT-01", "F-01"),
+        )
+        self.assertEqual(
+            [
+                VoicePrompt.CONFIGURATION_PUBLISHED,
+                VoicePrompt.CONFIGURATION_ACTIVATED,
+                VoicePrompt.CONFIGURATION_DISABLED,
+                VoicePrompt.CONFIGURATION_ARCHIVED,
+            ],
+            announcer.prompts,
         )
 
     def test_run_and_audit_pages_filter_and_show_snapshot_details(self) -> None:
@@ -257,6 +294,7 @@ class ManagementPageTests(unittest.TestCase):
         configuration = ProductConfiguration("501000087", "V1", {("SMT-01", "F-01"): "M-1"})
         configurations.save(configuration, actor="OP-UI")
         runs = SqliteProductionRunRepository(self.connection)
+        announcer = FakeAnnouncementSink()
         widget = ScanWidget(
             configurations,
             runs,
@@ -265,6 +303,7 @@ class ManagementPageTests(unittest.TestCase):
             run_id_factory=lambda: "RUN-RESUME",
             runs=runs,
             operator_provider=self.session.require,
+            announcer=announcer,
         )
         self.addCleanup(widget.close)
 
@@ -278,22 +317,47 @@ class ManagementPageTests(unittest.TestCase):
         widget.interrupt_run("RUN-RESUME", "人工中断")
         self.assertEqual(RunStatus.INTERRUPTED, runs.get("RUN-RESUME").status)
         self.assertFalse(widget.scan_input.isEnabled())
+        self.assertEqual(
+            [
+                VoicePrompt.RUN_STARTED,
+                VoicePrompt.RUN_INTERRUPTED,
+                VoicePrompt.RUN_RESUMED,
+                VoicePrompt.RUN_INTERRUPTED,
+            ],
+            announcer.prompts,
+        )
 
     def test_management_pages_report_invalid_or_missing_actions(self) -> None:
-        bom_widget = BomManagementWidget(SqliteBomRepository(self.connection), self.session.require)
+        announcer = FakeAnnouncementSink()
+        bom_widget = BomManagementWidget(
+            SqliteBomRepository(self.connection),
+            self.session.require,
+            announcer=announcer,
+        )
         self.addCleanup(bom_widget.close)
         bom_widget.publish_button.click()
         bom_widget.compare_button.click()
         self.assertIn("请选择", bom_widget.status_label.text())
 
         config_widget = ConfigurationManagementWidget(
-            SqliteProductConfigurationRepository(self.connection), self.session.require
+            SqliteProductConfigurationRepository(self.connection),
+            self.session.require,
+            announcer=announcer,
         )
         self.addCleanup(config_widget.close)
         config_widget.copy_button.click()
+        config_widget.publish_button.click()
         config_widget.validate_button.click()
         config_widget.save_draft_button.click()
         self.assertIn("产品配置", config_widget.status_label.text())
+        self.assertEqual(
+            [
+                VoicePrompt.LIFECYCLE_FAILED,
+                VoicePrompt.LIFECYCLE_FAILED,
+                VoicePrompt.LIFECYCLE_FAILED,
+            ],
+            announcer.prompts,
+        )
 
         run_widget = ProductionRunManagementWidget(SqliteProductionRunRepository(self.connection))
         self.addCleanup(run_widget.close)
