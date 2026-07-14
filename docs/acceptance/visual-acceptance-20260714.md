@@ -1,5 +1,10 @@
 # SMT Guard 产品化构建可视化人工验收记录
 
+> 2026-07-14 修复复验更新：原报告发现的 P1-01、P1-02、P2-01、P2-02、P3-01
+> 均已在本地分支 `fix/visual-acceptance-findings` 修复并通过自动化、隔离构建和实际窗口复验。
+> 下文第 1～11 节保留修复前的验收基线与原始证据；第 12 节记录修复后的结果、
+> 新证据和剩余限制。
+
 ## 1. 验收结论
 
 本轮使用贴近真实 SMT 上料场景的隔离数据，对最终隔离构建进行了八个页面及全局操作员栏的可视化人工验收。按本报告定义的 48 个验收点统计，**通过 43，失败 5**；另记录 **2 个观察项**。
@@ -271,3 +276,82 @@ BOM 差异在 UI 中显示为：
 - 未覆盖应用关闭时中断再启动恢复；已覆盖“开始新运行导致零扫码中断”和“切换操作员中断后恢复”。
 - 未对追加式扫码记录和审计日志执行破坏性 UPDATE/DELETE 验证，只读取并核对保护触发器定义。
 - 本轮是人工验收，不重复运行用户已报告通过的全量 139 项自动化测试、覆盖率、Ruff/Pyright/Bandit/uv lock 检查。
+
+## 12. 修复复验（2026-07-14）
+
+### 12.1 复验结论
+
+五项原始发现全部修复并通过回归，修复后无 P1/P2/P3 未解决缺陷：
+
+| 编号 | 修复结果 | 复验证据 |
+|---|---|---|
+| P1-01 | **通过**。刷新或首次进入生产运行页时，首行、详情快照、站位状态和恢复/中断按钮保持一致。 | [首次进入一致](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/01-run-first-entry-consistent.png)、[完成后再次进入一致](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/06-run-after-completion-consistent.png) |
+| P1-02 | **通过**。最终站位完成后立即禁用扫码输入和提交按钮，输入被清空，页面保持“全部对料完成”终态；恢复后运行中的控件按状态重新启用。 | [完成后输入锁定](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/05-scan-complete-input-locked.png) |
+| P2-01 | **通过**。导入顺序及已归档 BOM 再启用等生命周期错误显示明确中文和下一步操作。 | [导入顺序中文提示](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/03-import-order-chinese.png)、[BOM 生命周期中文提示](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/04-bom-lifecycle-chinese-layout.png) |
+| P2-02 | **通过**。关键字段按业务优先级设置默认列宽，表格单元格均保留完整文本 tooltip；版本、长物料码、运行编号、时间、操作员等在默认窗口下更易核对。 | [BOM 布局](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/04-bom-lifecycle-chinese-layout.png)、[运行布局](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/06-run-after-completion-consistent.png)、[记录布局](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/07-records-export-layout.png)、[配置布局](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/08-config-default-layout.png) |
+| P3-01 | **通过**。审计页每次激活自动查询最新数据，初始“尚未查询”与查询后 0 条结果有不同文案。 | [首次激活自动加载 26 条](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/02-audit-auto-refresh.png)、[再次激活加载 32 条](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/09-audit-latest-refresh.png)、[明确显示 0 条](../../.codex/tmp/visual-acceptance-fixes-20260714/screenshots/10-audit-zero-result.png) |
+
+### 12.2 分支、环境与隔离构建
+
+- 分支：`fix/visual-acceptance-findings`
+- 基线：`main` 与修复分支创建点均为 `920372d3a18c45263401645b890e9b11f6062cdd`
+- Python：uv 管理的 CPython 3.13.12
+- Python 环境前缀：`D:\work\smt\SMT\.venv`
+- 依赖复用：`D:\work\smt\SMT\.venv\Lib\site-packages`
+- 隔离构建目录：`.codex\tmp\visual-acceptance-fixes-20260714`
+- 隔离 EXE：`.codex\tmp\visual-acceptance-fixes-20260714\dist\SMTGuard\SMTGuard.exe`
+- EXE SHA-256：`6308823fa6a04d1c064929056562526e521deb213ce47e7cabacdb29057cb18f`
+- 可视化隔离 SQLite：`.codex\tmp\visual-acceptance-fixes-20260714\visual-data\smt_guard.sqlite3`
+- 本轮 UI 导出：`.codex\tmp\visual-acceptance-fixes-20260714\exports\run-regression.csv`
+- 数据库/CSV/截图核对结果：[database-audit.json](../../.codex/tmp/visual-acceptance-fixes-20260714/database-audit.json)
+
+构建显式使用独立 `--workpath` 和 `--distpath`，没有覆盖根目录已有 `build`/`dist`，也没有删除或重建 `.venv`。启动实际窗口时只操作本轮隔离构建进程，完成后已正常关闭。
+
+### 12.3 关键业务回归
+
+本轮从修复前隔离 SQLite 的只读副本开始，在新的 `visual-data` 中执行：
+
+1. 使用 OP-C 登录，首次进入生产运行页；首行已完成运行、详情快照、6 个站位和禁用按钮一致。
+2. 启动 `CFG-1.0` 零扫码运行 `RUN-20260714-072258-64EB9A6F`，随后启动新运行；前一运行以“开始新的生产运行”中断且保持 0/5。
+3. 启动 `CFG-2.0` 运行 `RUN-20260714-072337-29446CD2`，完成两个站位后将操作员从 OP-C 切换为 OP-D；运行按“切换操作员”中断。
+4. 从生产运行页恢复该运行；扫码页显示恢复人 OP-D、原有 2/6 进度及两条记录，输入和提交处于可用状态。
+5. 完成其余四个站位；运行成为 OP-D、`COMPLETED`、6/6，输入与提交立即禁用并保持完成终态。
+6. 再次进入生产运行页；高亮首行、OP-D、`COMPLETED`、6/6 详情和禁用按钮一致。
+7. 在记录查询页查询该运行并通过 UI 导出 6 行 CSV；CSV 与 SQLite 逐行一致。
+8. 审计页首次激活自动显示原有 26 条；产生新 START/INTERRUPT/RESUME/COMPLETE 后再次激活自动显示 32 条；无匹配筛选明确显示“查询完成：0 条”。
+
+本轮隔离库最终结果：
+
+- `PRAGMA integrity_check`：`ok`
+- `production_runs`：4
+- `run_station_states`：22
+- `attempts`：14，其中本轮完成运行 6 条，全部为 OK
+- `audit_logs`：32
+- 本轮运行审计链：OP-C START、OP-C INTERRUPT、OP-D RESUME、OP-D COMPLETE
+- 本轮 UI CSV：UTF-8 BOM、中文 11 列表头、6 行、与 SQLite 逐行一致
+- CSV SHA-256：`815dd58e26d2a0c5911359b9c3306e1567c098e4224e89399fcdc5fbcde5a1dd`
+- 追加式保护触发器仍包含 `attempts_no_update/delete` 与 `audit_logs_no_update/delete`
+
+原始验收 SQLite 只读复核仍为 2 个运行、11 个运行站位状态、8 条扫码记录、26 条审计日志，完整性为 `ok`；原始追加式记录与审计日志未被修改。
+
+### 12.4 自动化与质量门禁
+
+所有命令均在 `D:\work\smt\SMT` 作为工作目录运行：
+
+- 联合窄测试：`31 passed`
+- 全量 `pytest -q`：`143 passed, 24 subtests passed`
+- `uv lock --check`：通过，解析 58 个包
+- `ruff check .`：`All checks passed!`
+- `pyright`：`0 errors, 0 warnings, 0 informations`
+- `bandit -r src -q`：通过，无报告项
+- PyInstaller 隔离构建：通过（PyInstaller 6.21.0、Python 3.13.12）
+- 隔离 EXE `--smoke-test`：退出码 0，生成 SQLite，完整性 `ok`
+- `git diff --check`：通过；仅 Git 提示现有 Windows 工作树的 LF/CRLF 转换，不存在空白错误
+
+### 12.5 剩余限制与观察项
+
+- O-01 仍作为产品规则观察项：没有无依据增加“同一产品只能有一个 ACTIVE 配置”的强制约束。
+- O-02 偶发黑色首帧在本轮实际等待后的稳定截图中未复现，继续保留观察，不作为已稳定修复的问题。
+- 本轮仍未覆盖不同 DPI/分辨率、多显示器、远程桌面、现场显卡、真实扫码枪和蜂鸣器节拍。
+- tooltip 的完整文本行为由 Qt UI 回归测试覆盖；截图主要证明默认列宽和首屏布局，静态截图无法直接展示鼠标悬停后的 tooltip。
+- 修复、验证、构建和证据更新均只在本地完成；尚未提交、推送或创建 PR。

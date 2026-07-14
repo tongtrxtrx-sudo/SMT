@@ -65,6 +65,10 @@ class RecordQueryWidgetTests(unittest.TestCase):
         second_id = self.widget.record_table.item(1, 0)
         assert first_id is not None and second_id is not None
         self.assertEqual(["1", "2"], [first_id.text(), second_id.text()])
+        run_id = self.widget.record_table.item(0, 2)
+        assert run_id is not None
+        self.assertEqual("RUN-1", run_id.toolTip())
+        self.assertGreaterEqual(self.widget.record_table.columnWidth(2), 220)
         self.assertIn("2 条", self.widget.status_label.text())
 
     def test_shows_clear_empty_result(self) -> None:

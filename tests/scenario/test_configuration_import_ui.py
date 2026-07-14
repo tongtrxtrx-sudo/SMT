@@ -16,15 +16,9 @@ from smt_guard.ui.importing import ConfigurationImportWidget
 def sample_result() -> ImportResult:
     document = BomDocument(
         product=Product("501000087", "BOM-1", "Control board", "控制板", "大板"),
-        materials={
-            "013000081": Material(
-                "013000081", "端子线", "26AWG", "1", "电子物料/电子线"
-            )
-        },
+        materials={"013000081": Material("013000081", "端子线", "26AWG", "1", "电子物料/电子线")},
     )
-    configuration = ProductConfiguration(
-        "501000087", "V1", {("SMT-01", "F-01"): "013000081"}
-    )
+    configuration = ProductConfiguration("501000087", "V1", {("SMT-01", "F-01"): "013000081"})
     return ImportResult(document, configuration)
 
 
@@ -113,6 +107,18 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
 
         self.assertIn("Row 7", widget.status_label.text())
         self.assertEqual("error", widget.status_label.property("feedbackState"))
+
+    def test_translates_wrong_import_order_into_operator_guidance(self) -> None:
+        workflow = FakeImportWorkflow(
+            error=ImportValidationError("Import a BOM before importing a station table")
+        )
+        widget = self.make_widget(workflow)
+        self.fill_required_inputs(widget)
+
+        widget.station_import_button.click()
+
+        self.assertEqual("请先导入 BOM，再导入站位表。", widget.status_label.text())
+        self.assertNotIn("Import", widget.status_label.text())
 
     def test_rejects_blank_required_input_before_calling_workflow(self) -> None:
         workflow = FakeImportWorkflow(result=sample_result())

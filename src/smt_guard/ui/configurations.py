@@ -12,13 +12,13 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from smt_guard.configuration import ConfigurationStatus, ProductConfigurationRecord
 from smt_guard.scan import ProductConfiguration
+from smt_guard.ui.tables import readable_item, set_column_widths
 
 
 class ConfigurationRepository(Protocol):
@@ -90,11 +90,10 @@ class ConfigurationManagementWidget(QWidget):
         self.configuration_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
         )
-        self.configuration_table.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
-        )
+        self.configuration_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.configuration_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.configuration_table.verticalHeader().setVisible(False)
+        set_column_widths(self.configuration_table, (120, 170, 90, 120, 190, 120))
         splitter.addWidget(self.configuration_table)
         editor = QWidget()
         editor_layout = QVBoxLayout(editor)
@@ -103,6 +102,7 @@ class ConfigurationManagementWidget(QWidget):
         self.assignment_table = QTableWidget(0, 3)
         self.assignment_table.setHorizontalHeaderLabels(("设备编码", "站位编码", "物料编码"))
         self.assignment_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        set_column_widths(self.assignment_table, (150, 150, 240))
         editor_layout.addWidget(self.assignment_table, 1)
         row_actions = QHBoxLayout()
         self.add_row_button = QPushButton("新增行")
@@ -175,7 +175,7 @@ class ConfigurationManagementWidget(QWidget):
                 record.created_by,
             )
             for column, value in enumerate(values):
-                self.configuration_table.setItem(row, column, QTableWidgetItem(value))
+                self.configuration_table.setItem(row, column, readable_item(value))
         if self._records:
             self.configuration_table.selectRow(0)
         else:
@@ -196,7 +196,7 @@ class ConfigurationManagementWidget(QWidget):
         self.assignment_table.setRowCount(len(assignments))
         for row, ((device, station), material) in enumerate(assignments):
             for column, value in enumerate((device, station, material)):
-                self.assignment_table.setItem(row, column, QTableWidgetItem(value))
+                self.assignment_table.setItem(row, column, readable_item(value))
         editable = record.status is ConfigurationStatus.DRAFT
         self.assignment_table.setEditTriggers(
             QAbstractItemView.EditTrigger.AllEditTriggers
@@ -249,9 +249,7 @@ class ConfigurationManagementWidget(QWidget):
     def _save_draft(self) -> None:
         try:
             configuration = self._edited_configuration()
-            self._repository.update_draft(
-                configuration, actor=self._operator_provider()
-            )
+            self._repository.update_draft(configuration, actor=self._operator_provider())
         except (LookupError, ValueError) as error:
             self._show_error(str(error))
             return
@@ -317,18 +315,13 @@ class ConfigurationManagementWidget(QWidget):
             return
         self.refresh()
         self._select_configuration(configuration.product_code, configuration.version)
-        self._show_success(
-            f"{success} {configuration.product_code}/{configuration.version}"
-        )
+        self._show_success(f"{success} {configuration.product_code}/{configuration.version}")
         self.configurations_changed.emit()
 
     def _select_configuration(self, product_code: str, version: str) -> None:
         for row, record in enumerate(self._records):
             configuration = record.configuration
-            if (
-                configuration.product_code == product_code
-                and configuration.version == version
-            ):
+            if configuration.product_code == product_code and configuration.version == version:
                 self.configuration_table.selectRow(row)
                 return
 

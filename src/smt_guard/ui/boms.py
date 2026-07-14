@@ -13,12 +13,13 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from smt_guard.bom import BomVersion
+from smt_guard.ui.errors import operator_error_message
+from smt_guard.ui.tables import readable_item, set_column_widths
 
 
 class BomRepository(Protocol):
@@ -74,6 +75,7 @@ class BomManagementWidget(QWidget):
         self.version_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.version_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.version_table.verticalHeader().setVisible(False)
+        set_column_widths(self.version_table, (120, 170, 90, 180, 260, 190, 120))
         splitter.addWidget(self.version_table)
         detail = QWidget()
         detail_layout = QVBoxLayout(detail)
@@ -85,6 +87,7 @@ class BomManagementWidget(QWidget):
             ("物料编码", "名称", "规格", "单位用量", "分类")
         )
         self.material_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        set_column_widths(self.material_table, (200, 150, 180, 100, 160))
         detail_layout.addWidget(self.material_table, 1)
         splitter.addWidget(detail)
         splitter.setSizes((700, 500))
@@ -145,7 +148,7 @@ class BomManagementWidget(QWidget):
                 version.imported_by,
             )
             for column, value in enumerate(values):
-                self.version_table.setItem(row, column, QTableWidgetItem(value))
+                self.version_table.setItem(row, column, readable_item(value))
             label = f"{values[0]} / {version.version}"
             self.compare_first.addItem(label, version.id)
             self.compare_second.addItem(label, version.id)
@@ -182,7 +185,7 @@ class BomManagementWidget(QWidget):
                     material.category,
                 )
             ):
-                self.material_table.setItem(row, column, QTableWidgetItem(value))
+                self.material_table.setItem(row, column, readable_item(value))
 
     def _selected(self) -> BomVersion | None:
         row = self.version_table.currentRow()
@@ -199,7 +202,7 @@ class BomManagementWidget(QWidget):
                 product, version.version, actor=self._operator_provider()
             )
         except (LookupError, ValueError) as error:
-            self._show_error(str(error))
+            self._show_error(operator_error_message(error))
             return
         self.refresh()
         self._show_success(f"{success} {product}/{version.version}")

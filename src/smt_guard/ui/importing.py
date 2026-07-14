@@ -13,13 +13,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from smt_guard.bom import BomDocument
 from smt_guard.importing import ImportResult
+from smt_guard.ui.errors import operator_error_message
+from smt_guard.ui.tables import readable_item, set_column_widths
 
 
 class ConfigurationImportWorkflow(Protocol):
@@ -108,11 +109,10 @@ class ConfigurationImportWidget(QWidget):
 
         self.assignment_table = QTableWidget(0, 3)
         self.assignment_table.setHorizontalHeaderLabels(("设备编码", "站位编码", "物料编码"))
-        self.assignment_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
+        self.assignment_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.assignment_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.assignment_table.verticalHeader().setVisible(False)
+        set_column_widths(self.assignment_table, (150, 150, 240))
         layout.addWidget(self.assignment_table, 1)
 
         self.status_label = QLabel("请先导入 BOM，再导入站位表")
@@ -143,7 +143,7 @@ class ConfigurationImportWidget(QWidget):
             else:
                 document = self._workflow.import_bom(bom_path)
         except (OSError, ValueError) as error:
-            self._show_error(str(error))
+            self._show_error(operator_error_message(error))
             return
 
         self._preview_bom(document)
@@ -153,9 +153,7 @@ class ConfigurationImportWidget(QWidget):
     @Slot()
     def _import_station_table(self) -> None:
         try:
-            station_path = Path(
-                self._required(self.station_path_input.text(), "站位表文件")
-            )
+            station_path = Path(self._required(self.station_path_input.text(), "站位表文件"))
             sheet = self._required(self.station_sheet_input.text(), "站位工作表")
             version = self._required(self.version_input.text(), "产品版本")
             result = self._workflow.import_station_table(
@@ -164,7 +162,7 @@ class ConfigurationImportWidget(QWidget):
                 station_sheet=sheet,
             )
         except (OSError, ValueError) as error:
-            self._show_error(str(error))
+            self._show_error(operator_error_message(error))
             return
 
         self._preview(result)
@@ -188,9 +186,9 @@ class ConfigurationImportWidget(QWidget):
         self.assignment_count_label.setText(f"站位分配：{len(assignments)}")
         self.assignment_table.setRowCount(len(assignments))
         for row, ((device, station), material) in enumerate(assignments):
-            self.assignment_table.setItem(row, 0, QTableWidgetItem(device))
-            self.assignment_table.setItem(row, 1, QTableWidgetItem(station))
-            self.assignment_table.setItem(row, 2, QTableWidgetItem(material))
+            self.assignment_table.setItem(row, 0, readable_item(device))
+            self.assignment_table.setItem(row, 1, readable_item(station))
+            self.assignment_table.setItem(row, 2, readable_item(material))
 
     def _select_xlsx(self, target: QLineEdit, caption: str) -> None:
         selected, _ = QFileDialog.getOpenFileName(

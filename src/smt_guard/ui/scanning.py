@@ -172,8 +172,6 @@ class ScanWidget(QWidget):
         self.progress_bar.setRange(0, len(configuration.assignments))
         self.progress_bar.setValue(0)
         self.attempt_table.setRowCount(0)
-        self.scan_input.setEnabled(True)
-        self.submit_button.setEnabled(True)
         self._render_feedback(self._run.initial_feedback)
         self.run_changed.emit()
         QTimer.singleShot(0, self.focus_scanner)
@@ -183,8 +181,7 @@ class ScanWidget(QWidget):
         if self._run is not None and not self._run.completed:
             self._run.interrupt(reason)
             self._run = None
-            self.scan_input.setEnabled(False)
-            self.submit_button.setEnabled(False)
+            self._set_scan_controls_enabled(False)
             self.run_changed.emit()
 
     def resume_run(self, run_id: str) -> None:
@@ -216,8 +213,6 @@ class ScanWidget(QWidget):
         )
         self.progress_bar.setRange(0, len(configuration.assignments))
         self._refresh_attempts()
-        self.scan_input.setEnabled(True)
-        self.submit_button.setEnabled(True)
         self._render_feedback(self._run.initial_feedback)
         self.run_changed.emit()
         QTimer.singleShot(0, self.focus_scanner)
@@ -232,8 +227,7 @@ class ScanWidget(QWidget):
             if self._run is not None and self._run.run_id == run_id:
                 self._run.interrupt(reason)
                 self._run = None
-                self.scan_input.setEnabled(False)
-                self.submit_button.setEnabled(False)
+                self._set_scan_controls_enabled(False)
             else:
                 self._runs.interrupt(
                     run_id,
@@ -258,6 +252,10 @@ class ScanWidget(QWidget):
         if self._run is None:
             self._show_message("请先开始运行", "error")
             return
+        if self._run.completed:
+            self._set_scan_controls_enabled(False)
+            self._show_message("全部对料完成", "ok")
+            return
         code = self.scan_input.text().strip()
         if not code:
             self._show_message("扫码内容不能为空", "error")
@@ -275,10 +273,20 @@ class ScanWidget(QWidget):
             VisualIntent.OK: "ok",
             VisualIntent.NG: "ng",
         }[state.intent]
-        self._show_message(state.message, feedback_state)
+        self._show_message("全部对料完成" if state.complete else state.message, feedback_state)
         self.expected_label.setText(f"要求物料：{state.expected_material or '-'}")
         self.scanned_label.setText(f"扫码物料：{state.scanned_material or '-'}")
         self.progress_bar.setValue(state.completed_stations)
+        self._set_scan_controls_enabled(
+            self._run is not None and not self._run.completed and not state.complete
+        )
+
+    def _set_scan_controls_enabled(self, enabled: bool) -> None:
+        """Keep scanner input and submission in one lifecycle state."""
+        self.scan_input.setEnabled(enabled)
+        self.submit_button.setEnabled(enabled)
+        if not enabled:
+            self.scan_input.clear()
 
     def _refresh_attempts(self) -> None:
         if self._run is None:
