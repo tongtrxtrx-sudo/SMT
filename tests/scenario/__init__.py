@@ -1,0 +1,1 @@
+"""Acceptance-oriented scenario tests."""

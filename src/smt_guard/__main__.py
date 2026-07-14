@@ -1,0 +1,6 @@
+"""Module execution entry point for SMT Guard."""
+
+from smt_guard.app import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

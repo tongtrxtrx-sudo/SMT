@@ -1,0 +1,95 @@
+import csv
+import os
+import unittest
+from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication
+
+from smt_guard.exporter import CsvRecordExporter
+from smt_guard.records import Attempt, InMemoryAttemptRepository
+from smt_guard.ui.records import RecordQueryWidget
+from smt_guard.verification import VerificationResult
+
+
+def make_attempt(run_id: str, station_code: str) -> Attempt:
+    return Attempt(
+        id=None,
+        timestamp=datetime(2026, 7, 11, 12, 0, tzinfo=UTC),
+        run_id=run_id,
+        product_code="501000087",
+        product_version="V1",
+        device_code="SMT-01",
+        station_code=station_code,
+        expected_material="013000081",
+        scanned_material="013000081",
+        result=VerificationResult.OK,
+        repeated=False,
+    )
+
+
+class RecordQueryWidgetTests(unittest.TestCase):
+    app: QApplication
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        application = QApplication.instance()
+        if application is None:
+            cls.app = QApplication([])
+        elif isinstance(application, QApplication):
+            cls.app = application
+        else:
+            raise RuntimeError("A non-GUI Qt application already exists")
+
+    def setUp(self) -> None:
+        self.repository = InMemoryAttemptRepository()
+        self.repository.append(make_attempt("RUN-1", "F-01"))
+        self.repository.append(make_attempt("RUN-1", "F-02"))
+        self.repository.append(make_attempt("RUN-2", "R-01"))
+        self.widget = RecordQueryWidget(
+            self.repository,
+            CsvRecordExporter(self.repository),
+        )
+        self.addCleanup(self.widget.close)
+
+    def test_queries_one_run_in_identifier_order(self) -> None:
+        self.widget.run_id_input.setText(" RUN-1 ")
+
+        self.widget.query_button.click()
+
+        self.assertEqual(2, self.widget.record_table.rowCount())
+        first_id = self.widget.record_table.item(0, 0)
+        second_id = self.widget.record_table.item(1, 0)
+        assert first_id is not None and second_id is not None
+        self.assertEqual(["1", "2"], [first_id.text(), second_id.text()])
+        self.assertIn("2 条", self.widget.status_label.text())
+
+    def test_shows_clear_empty_result(self) -> None:
+        self.widget.run_id_input.setText("EMPTY")
+
+        self.widget.query_button.click()
+
+        self.assertEqual(0, self.widget.record_table.rowCount())
+        self.assertIn("未找到", self.widget.status_label.text())
+
+    def test_exports_only_selected_run_to_temporary_csv(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "records.csv"
+            self.widget.run_id_input.setText("RUN-1")
+            self.widget.export_path_input.setText(str(path))
+
+            self.widget.export_button.click()
+
+            with path.open("r", encoding="utf-8-sig", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+
+        self.assertEqual(2, len(rows))
+        self.assertEqual({"RUN-1"}, {row["运行编号"] for row in rows})
+        self.assertIn("导出", self.widget.status_label.text())
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,1 @@
+"""SMT Guard application package."""

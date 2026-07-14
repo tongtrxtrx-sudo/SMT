@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Application data
+data/
+exports/
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment and IDE files
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+
+# Codex scratch data
+.codex/
