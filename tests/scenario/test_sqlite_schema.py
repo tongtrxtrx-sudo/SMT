@@ -77,6 +77,48 @@ class SqliteSchemaTests(unittest.TestCase):
         )
         self.assertEqual(2, self.connection.execute("PRAGMA user_version").fetchone()[0])
 
+    def test_repairs_lagging_user_version_after_validating_complete_history(self) -> None:
+        database = SqliteDatabase(self.connection)
+        database.initialize()
+        self.connection.execute(
+            "INSERT INTO devices (code, name, line, enabled) VALUES (?, ?, ?, ?)",
+            ("SMT-01", "Machine 1", "Line A", 1),
+        )
+        self.connection.execute("PRAGMA user_version = 1")
+        self.connection.commit()
+
+        database.initialize()
+
+        self.assertEqual(2, self.connection.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(
+            ("SMT-01", "Machine 1"),
+            self.connection.execute(
+                "SELECT code, name FROM devices WHERE code = 'SMT-01'"
+            ).fetchone(),
+        )
+
+    def test_does_not_repair_user_version_when_history_checksum_is_invalid(self) -> None:
+        database = SqliteDatabase(self.connection)
+        database.initialize()
+        self.connection.execute("PRAGMA user_version = 1")
+        self.connection.execute(
+            "UPDATE schema_migrations SET checksum = 'tampered' WHERE version = 2"
+        )
+        self.connection.commit()
+
+        with self.assertRaisesRegex(MigrationError, "modified after application"):
+            database.initialize()
+
+        self.assertEqual(1, self.connection.execute("PRAGMA user_version").fetchone()[0])
+
+    def test_rejects_user_version_ahead_of_valid_history(self) -> None:
+        SqliteDatabase(self.connection, MIGRATIONS[:1]).initialize()
+        self.connection.execute("PRAGMA user_version = 2")
+        self.connection.commit()
+
+        with self.assertRaisesRegex(MigrationError, "does not match migration history"):
+            SqliteDatabase(self.connection).initialize()
+
     def test_failed_migration_rolls_back_version_and_history(self) -> None:
         SqliteDatabase(self.connection).initialize()
         broken = Migration(

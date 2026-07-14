@@ -136,7 +136,15 @@ class SqliteDatabase:
         elif not applied and user_version != 0:
             raise MigrationError(f"Schema version {user_version} has no migration history")
 
-        self._verify_history(applied, user_version)
+        self._verify_history(applied)
+        history_version = max(applied, default=0)
+        if user_version < history_version:
+            self._repair_lagging_user_version(history_version)
+        elif user_version > history_version:
+            raise MigrationError(
+                f"PRAGMA user_version {user_version} does not match migration history "
+                f"{history_version}"
+            )
         current = max(applied, default=0)
         for migration in self._migrations:
             if migration.version > current:
@@ -176,7 +184,6 @@ class SqliteDatabase:
     def _verify_history(
         self,
         applied: dict[int, tuple[str, str]],
-        user_version: int,
     ) -> None:
         expected_versions = list(range(1, max(applied, default=0) + 1))
         if list(applied) != expected_versions:
@@ -188,12 +195,22 @@ class SqliteDatabase:
                 raise MigrationError(f"Unknown applied schema migration: {version}")
             if (name, checksum) != (migration.name, self._checksum(migration)):
                 raise MigrationError(f"Schema migration {version} was modified after application")
-        history_version = max(applied, default=0)
-        if user_version != history_version:
+
+    def _repair_lagging_user_version(self, history_version: int) -> None:
+        """Repair redundant metadata after validating the complete migration history."""
+        safe_version = int(history_version)
+        try:
+            self._connection.execute(f"PRAGMA user_version = {safe_version}")
+            self._connection.commit()
+        except sqlite3.Error as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
             raise MigrationError(
-                f"PRAGMA user_version {user_version} does not match migration history "
-                f"{history_version}"
-            )
+                f"Failed to repair PRAGMA user_version to {safe_version}"
+            ) from error
+        repaired = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
+        if repaired != safe_version:
+            raise MigrationError(f"Failed to repair PRAGMA user_version to {safe_version}")
 
     def _apply(self, migration: Migration) -> None:
         checksum = self._checksum(migration)
