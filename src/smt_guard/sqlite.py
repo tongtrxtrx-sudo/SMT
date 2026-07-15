@@ -14,7 +14,6 @@ from smt_guard.configuration import ConfigurationStatus, ProductConfigurationRec
 from smt_guard.master_data import (
     Device,
     DuplicateCodeError,
-    MasterDataError,
     ReferencedEntityError,
     Station,
     UnknownEntityError,
@@ -316,7 +315,22 @@ class SqliteMasterDataRepository:
     def enable_device(self, code: str, *, actor: str = "SYSTEM") -> None:
         device = self.get_device(code)
         if device.archived:
-            raise MasterDataError(f"Archived device cannot be enabled: {device.code}")
+            with self._connection:
+                self._connection.execute(
+                    "UPDATE devices SET enabled = 1, archived = 0, updated_at = ? "
+                    "WHERE code = ?",
+                    (_iso(_utc_now()), device.code),
+                )
+                _write_audit(
+                    self._connection,
+                    actor=actor,
+                    action="ENABLE",
+                    entity_type="DEVICE",
+                    entity_key=device.code,
+                    before={"enabled": device.enabled, "archived": True},
+                    after={"enabled": True, "archived": False},
+                )
+            return
         self._set_device_enabled(code, True, actor)
 
     def _set_device_enabled(self, code: str, enabled: bool, actor: str) -> None:
@@ -600,9 +614,22 @@ class SqliteMasterDataRepository:
     ) -> None:
         station = self.get_station(device_code, station_code)
         if station.archived:
-            raise MasterDataError(
-                f"Archived station cannot be enabled: {station.device_code}/{station.code}"
-            )
+            with self._connection:
+                self._connection.execute(
+                    "UPDATE stations SET enabled = 1, archived = 0, updated_at = ? "
+                    "WHERE device_code = ? AND code = ?",
+                    (_iso(_utc_now()), station.device_code, station.code),
+                )
+                _write_audit(
+                    self._connection,
+                    actor=actor,
+                    action="ENABLE",
+                    entity_type="STATION",
+                    entity_key=f"{station.device_code}/{station.code}",
+                    before={"enabled": station.enabled, "archived": True},
+                    after={"enabled": True, "archived": False},
+                )
+            return
         self._set_station_enabled(device_code, station_code, True, actor)
 
     def _set_station_enabled(
@@ -845,7 +872,11 @@ class SqliteBomRepository:
         self, product_code: str, version: str, *, actor: str = "SYSTEM"
     ) -> BomVersion:
         current = self.get(product_code, version)
-        if current.status not in {BomStatus.PUBLISHED, BomStatus.OBSOLETE}:
+        if current.status not in {
+            BomStatus.PUBLISHED,
+            BomStatus.OBSOLETE,
+            BomStatus.ARCHIVED,
+        }:
             raise InvalidLifecycleTransition(
                 f"BOM must be published before activation: {product_code}/{version}"
             )
@@ -1200,7 +1231,11 @@ class SqliteProductConfigurationRepository:
         return self._transition(
             product_code,
             version,
-            {ConfigurationStatus.PUBLISHED, ConfigurationStatus.DISABLED},
+            {
+                ConfigurationStatus.PUBLISHED,
+                ConfigurationStatus.DISABLED,
+                ConfigurationStatus.ARCHIVED,
+            },
             ConfigurationStatus.ACTIVE,
             actor,
         )

@@ -6,7 +6,6 @@ from typing import Protocol
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -166,10 +165,8 @@ class DeviceStationWidget(QWidget):
         self.device_query_input.setPlaceholderText("按编码、名称或产线筛选")
         self.device_status_filter = QComboBox()
         self.device_status_filter.addItems(("全部状态", "启用", "停用"))
-        self.device_archived_check = QCheckBox("包含归档")
         query.addWidget(self.device_query_input, 1)
         query.addWidget(self.device_status_filter)
-        query.addWidget(self.device_archived_check)
         layout.addLayout(query)
         form = QFormLayout()
         self.device_code_input = QLineEdit()
@@ -183,19 +180,16 @@ class DeviceStationWidget(QWidget):
         buttons = QHBoxLayout()
         self.add_device_button = QPushButton("创建设备")
         self.update_device_button = QPushButton("保存修改")
-        self.enable_device_button = QPushButton("启用设备")
-        self.disable_device_button = QPushButton("停用设备")
-        self.delete_device_button = QPushButton("删除未引用")
-        self.archive_device_button = QPushButton("归档设备")
+        self.enable_device_button = QPushButton("启用")
+        self.disable_device_button = QPushButton("停用")
         buttons.addWidget(self.add_device_button)
         buttons.addWidget(self.update_device_button)
         buttons.addWidget(self.enable_device_button)
         buttons.addWidget(self.disable_device_button)
-        buttons.addWidget(self.delete_device_button)
-        buttons.addWidget(self.archive_device_button)
+        buttons.addStretch(1)
         layout.addLayout(buttons)
 
-        self.device_table = self._table(("设备编码", "设备名称", "产线", "状态", "归档"))
+        self.device_table = self._table(("设备编码", "设备名称", "产线", "状态"))
         layout.addWidget(self.device_table)
         return panel
 
@@ -210,10 +204,8 @@ class DeviceStationWidget(QWidget):
         self.station_query_input.setPlaceholderText("按站位编码或名称筛选")
         self.station_status_filter = QComboBox()
         self.station_status_filter.addItems(("全部状态", "启用", "停用"))
-        self.station_archived_check = QCheckBox("包含归档")
         query.addWidget(self.station_query_input, 1)
         query.addWidget(self.station_status_filter)
-        query.addWidget(self.station_archived_check)
         layout.addLayout(query)
 
         single_form = QFormLayout()
@@ -241,18 +233,15 @@ class DeviceStationWidget(QWidget):
 
         station_buttons = QHBoxLayout()
         self.update_station_button = QPushButton("保存修改")
-        self.enable_station_button = QPushButton("启用站位")
-        self.disable_station_button = QPushButton("停用站位")
-        self.delete_station_button = QPushButton("删除未引用")
-        self.archive_station_button = QPushButton("归档已引用")
+        self.enable_station_button = QPushButton("启用")
+        self.disable_station_button = QPushButton("停用")
         station_buttons.addWidget(self.update_station_button)
         station_buttons.addWidget(self.enable_station_button)
         station_buttons.addWidget(self.disable_station_button)
-        station_buttons.addWidget(self.delete_station_button)
-        station_buttons.addWidget(self.archive_station_button)
+        station_buttons.addStretch(1)
         layout.addLayout(station_buttons)
 
-        self.station_table = self._table(("站位编码", "站位名称", "状态", "已引用", "归档"))
+        self.station_table = self._table(("站位编码", "站位名称", "状态", "已引用"))
         layout.addWidget(self.station_table)
         return panel
 
@@ -261,22 +250,16 @@ class DeviceStationWidget(QWidget):
         self.update_device_button.clicked.connect(self._update_device)
         self.enable_device_button.clicked.connect(self._enable_device)
         self.disable_device_button.clicked.connect(self._disable_device)
-        self.delete_device_button.clicked.connect(self._delete_device)
-        self.archive_device_button.clicked.connect(self._archive_device)
         self.device_query_input.textChanged.connect(self._device_filter_changed)
         self.device_status_filter.currentIndexChanged.connect(self._device_filter_changed)
-        self.device_archived_check.toggled.connect(self._device_filter_changed)
         self.device_table.itemSelectionChanged.connect(self._device_selection_changed)
         self.add_station_button.clicked.connect(self._add_station)
         self.update_station_button.clicked.connect(self._update_station)
         self.enable_station_button.clicked.connect(self._enable_station)
         self.bulk_add_button.clicked.connect(self._bulk_add_stations)
         self.disable_station_button.clicked.connect(self._disable_station)
-        self.delete_station_button.clicked.connect(self._delete_station)
-        self.archive_station_button.clicked.connect(self._archive_station)
         self.station_query_input.textChanged.connect(self._station_filter_changed)
         self.station_status_filter.currentIndexChanged.connect(self._station_filter_changed)
-        self.station_archived_check.toggled.connect(self._station_filter_changed)
         self.station_table.itemSelectionChanged.connect(self._station_selection_changed)
 
     @Slot(str)
@@ -297,7 +280,7 @@ class DeviceStationWidget(QWidget):
         devices = self._repository.search_devices(
             self.device_query_input.text(),
             enabled=self._status_filter(self.device_status_filter),
-            include_archived=self.device_archived_check.isChecked(),
+            include_archived=True,
         )
         self.device_table.blockSignals(True)
         self.device_table.setRowCount(len(devices))
@@ -309,8 +292,7 @@ class DeviceStationWidget(QWidget):
                     device.code,
                     device.name,
                     device.line,
-                    self._enabled_text(device.enabled),
-                    "是" if device.archived else "否",
+                    self._enabled_text(device.enabled and not device.archived),
                 ),
             )
         self.device_table.blockSignals(False)
@@ -324,6 +306,7 @@ class DeviceStationWidget(QWidget):
         else:
             self.device_table.clearSelection()
             self._refresh_stations()
+        self._sync_device_state_buttons()
 
     @Slot()
     def _device_selection_changed(self) -> None:
@@ -336,17 +319,20 @@ class DeviceStationWidget(QWidget):
             ):
                 item = self.device_table.item(row, column)
                 target.setText("" if item is None else item.text())
+        self._sync_device_state_buttons()
         self._refresh_stations()
 
     @Slot()
     def _station_selection_changed(self) -> None:
         row = self.station_table.currentRow()
         if row < 0:
+            self._sync_station_state_buttons()
             return
         code = self.station_table.item(row, 0)
         name = self.station_table.item(row, 1)
         self.station_code_input.setText("" if code is None else code.text())
         self.station_name_input.setText("" if name is None else name.text())
+        self._sync_station_state_buttons()
 
     @Slot()
     def _add_device(self) -> None:
@@ -385,17 +371,21 @@ class DeviceStationWidget(QWidget):
         if code is None:
             return
         try:
+            actor_kwargs = self._actor_kwargs()
+            was_disabled = self.enable_device_button.isEnabled()
             self._repository.update_device(
                 code,
                 name=self._required(self.device_name_input.text(), "设备名称"),
                 line=self.device_line_input.text(),
-                **self._actor_kwargs(),
+                **actor_kwargs,
             )
+            if was_disabled:
+                self._repository.enable_device(code, **actor_kwargs)
         except (MasterDataError, ValueError) as error:
             self._show_error(str(error))
             return
         self.refresh_devices(code)
-        self._show_success(f"已更新设备 {code}")
+        self._show_success(f"已更新并启用设备 {code}")
 
     @Slot()
     def _enable_device(self) -> None:
@@ -502,17 +492,21 @@ class DeviceStationWidget(QWidget):
             return
         device, station = selection
         try:
+            actor_kwargs = self._actor_kwargs()
+            was_disabled = self.enable_station_button.isEnabled()
             self._repository.update_station(
                 device,
                 station,
                 name=self.station_name_input.text(),
-                **self._actor_kwargs(),
+                **actor_kwargs,
             )
+            if was_disabled:
+                self._repository.enable_station(device, station, **actor_kwargs)
         except (MasterDataError, ValueError) as error:
             self._show_error(str(error))
             return
         self._refresh_stations(station)
-        self._show_success(f"已更新站位 {device}/{station}")
+        self._show_success(f"已更新并启用站位 {device}/{station}")
 
     @Slot()
     def _enable_station(self) -> None:
@@ -547,7 +541,7 @@ class DeviceStationWidget(QWidget):
             device,
             self.station_query_input.text(),
             enabled=self._status_filter(self.station_status_filter),
-            include_archived=self.station_archived_check.isChecked(),
+            include_archived=True,
         )
         self.station_table.setRowCount(len(stations))
         for row, station in enumerate(stations):
@@ -557,9 +551,8 @@ class DeviceStationWidget(QWidget):
                 (
                     station.code,
                     station.name,
-                    self._enabled_text(station.enabled),
+                    self._enabled_text(station.enabled and not station.archived),
                     "是" if station.referenced else "否",
-                    "是" if station.archived else "否",
                 ),
             )
         target_row = next(
@@ -570,6 +563,23 @@ class DeviceStationWidget(QWidget):
             self.station_table.selectRow(target_row)
         else:
             self.station_table.clearSelection()
+        self._sync_station_state_buttons()
+
+    def _sync_device_state_buttons(self) -> None:
+        row = self.device_table.currentRow()
+        item = self.device_table.item(row, 3) if row >= 0 else None
+        selected = item is not None
+        enabled = selected and item.text() == "启用"
+        self.enable_device_button.setEnabled(selected and not enabled)
+        self.disable_device_button.setEnabled(enabled)
+
+    def _sync_station_state_buttons(self) -> None:
+        row = self.station_table.currentRow()
+        item = self.station_table.item(row, 2) if row >= 0 else None
+        selected = item is not None
+        enabled = selected and item.text() == "启用"
+        self.enable_station_button.setEnabled(selected and not enabled)
+        self.disable_station_button.setEnabled(enabled)
 
     def _current_device_code(self) -> str | None:
         row = self.device_table.currentRow()

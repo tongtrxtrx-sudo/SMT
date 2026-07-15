@@ -97,6 +97,14 @@ class ManagementPageTests(unittest.TestCase):
         self.addCleanup(widget.close)
 
         self.assertEqual(2, widget.version_table.rowCount())
+        self.assertEqual(
+            {"停用"},
+            {widget.version_table.item(row, 2).text() for row in range(2)},  # type: ignore[union-attr]
+        )
+        self.assertEqual("启用", widget.activate_button.text())
+        self.assertEqual("停用", widget.disable_button.text())
+        self.assertTrue(widget.activate_button.isEnabled())
+        self.assertFalse(widget.disable_button.isEnabled())
         self.assertIn("SHA-256", widget.detail_label.text())
         sha_item = widget.version_table.item(0, 4)
         assert sha_item is not None
@@ -106,25 +114,26 @@ class ManagementPageTests(unittest.TestCase):
         self.assertIn("M-2", widget.compare_label.text())
 
         widget.version_table.selectRow(0)
-        widget.publish_button.click()
         widget.activate_button.click()
-        widget.obsolete_button.click()
-        widget.archive_button.click()
-        self.assertIn("已归档", widget.status_label.text())
+        self.assertFalse(widget.activate_button.isEnabled())
+        self.assertTrue(widget.disable_button.isEnabled())
+        widget.disable_button.click()
+        self.assertTrue(widget.activate_button.isEnabled())
+        self.assertFalse(widget.disable_button.isEnabled())
+        self.assertIn("已停用", widget.status_label.text())
         self.assertEqual(
             [
-                VoicePrompt.BOM_PUBLISHED,
                 VoicePrompt.BOM_ACTIVATED,
-                VoicePrompt.BOM_OBSOLETED,
-                VoicePrompt.BOM_ARCHIVED,
+                VoicePrompt.BOM_DISABLED,
             ],
             announcer.prompts,
         )
+        self.assertEqual("BOM 已停用", VoicePrompt.BOM_DISABLED.value)
 
-        widget.activate_button.click()
-        self.assertIn("启用前必须先发布 BOM", widget.status_label.text())
-        self.assertNotIn("must be published", widget.status_label.text())
-        self.assertEqual(VoicePrompt.LIFECYCLE_FAILED, announcer.prompts[-1])
+        prompts_before_disabled_click = list(announcer.prompts)
+        widget.disable_button.click()
+        self.assertIn("已停用", widget.status_label.text())
+        self.assertEqual(prompts_before_disabled_click, announcer.prompts)
 
     def test_configuration_page_copies_edits_and_releases_new_version(self) -> None:
         repository = SqliteProductConfigurationRepository(self.connection)
@@ -141,27 +150,34 @@ class ManagementPageTests(unittest.TestCase):
         assert version_item is not None
         self.assertEqual(version_item.text(), version_item.toolTip())
         self.assertGreaterEqual(widget.configuration_table.columnWidth(1), 170)
+        self.assertEqual("启用", widget.configuration_table.item(0, 2).text())  # type: ignore[union-attr]
+        self.assertEqual("复制新版本", widget.copy_button.text())
+        self.assertEqual("保存修改", widget.save_draft_button.text())
+        self.assertFalse(widget.activate_button.isEnabled())
+        self.assertTrue(widget.disable_button.isEnabled())
         widget.new_version_input.setText("V2")
         widget.copy_button.click()
         self.assertEqual(2, widget.configuration_table.rowCount())
 
         widget.configuration_table.selectRow(1)
+        self.assertTrue(widget.activate_button.isEnabled())
+        self.assertFalse(widget.disable_button.isEnabled())
         widget.assignment_table.item(0, 2).setText("M-2")  # type: ignore[union-attr]
         widget.save_draft_button.click()
-        widget.publish_button.click()
         widget.activate_button.click()
+        self.assertFalse(widget.activate_button.isEnabled())
+        self.assertTrue(widget.disable_button.isEnabled())
         widget.disable_button.click()
-        widget.archive_button.click()
+        self.assertTrue(widget.activate_button.isEnabled())
+        self.assertFalse(widget.disable_button.isEnabled())
         self.assertEqual(
             "M-2",
             repository.get("501000087", "V2").required_material("SMT-01", "F-01"),
         )
         self.assertEqual(
             [
-                VoicePrompt.CONFIGURATION_PUBLISHED,
                 VoicePrompt.CONFIGURATION_ACTIVATED,
                 VoicePrompt.CONFIGURATION_DISABLED,
-                VoicePrompt.CONFIGURATION_ARCHIVED,
             ],
             announcer.prompts,
         )
@@ -335,7 +351,9 @@ class ManagementPageTests(unittest.TestCase):
             announcer=announcer,
         )
         self.addCleanup(bom_widget.close)
-        bom_widget.publish_button.click()
+        self.assertFalse(bom_widget.activate_button.isEnabled())
+        self.assertFalse(bom_widget.disable_button.isEnabled())
+        bom_widget.activate_button.click()
         bom_widget.compare_button.click()
         self.assertIn("请选择", bom_widget.status_label.text())
 
@@ -345,17 +363,15 @@ class ManagementPageTests(unittest.TestCase):
             announcer=announcer,
         )
         self.addCleanup(config_widget.close)
+        self.assertFalse(config_widget.activate_button.isEnabled())
+        self.assertFalse(config_widget.disable_button.isEnabled())
         config_widget.copy_button.click()
-        config_widget.publish_button.click()
+        config_widget.activate_button.click()
         config_widget.validate_button.click()
         config_widget.save_draft_button.click()
         self.assertIn("产品配置", config_widget.status_label.text())
         self.assertEqual(
-            [
-                VoicePrompt.LIFECYCLE_FAILED,
-                VoicePrompt.LIFECYCLE_FAILED,
-                VoicePrompt.LIFECYCLE_FAILED,
-            ],
+            [VoicePrompt.LIFECYCLE_FAILED],
             announcer.prompts,
         )
 

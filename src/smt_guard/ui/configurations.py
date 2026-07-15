@@ -111,7 +111,7 @@ class ConfigurationManagementWidget(QWidget):
         row_actions = QHBoxLayout()
         self.add_row_button = QPushButton("新增行")
         self.remove_row_button = QPushButton("删除行")
-        self.save_draft_button = QPushButton("保存草稿")
+        self.save_draft_button = QPushButton("保存修改")
         row_actions.addWidget(self.add_row_button)
         row_actions.addWidget(self.remove_row_button)
         row_actions.addWidget(self.save_draft_button)
@@ -123,20 +123,16 @@ class ConfigurationManagementWidget(QWidget):
         lifecycle = QHBoxLayout()
         self.new_version_input = QLineEdit()
         self.new_version_input.setPlaceholderText("新版本号")
-        self.copy_button = QPushButton("复制为草稿")
+        self.copy_button = QPushButton("复制新版本")
         self.validate_button = QPushButton("校验")
-        self.publish_button = QPushButton("发布")
         self.activate_button = QPushButton("启用")
         self.disable_button = QPushButton("停用")
-        self.archive_button = QPushButton("归档")
         lifecycle.addWidget(self.new_version_input)
         for button in (
             self.copy_button,
             self.validate_button,
-            self.publish_button,
             self.activate_button,
             self.disable_button,
-            self.archive_button,
         ):
             lifecycle.addWidget(button)
         layout.addLayout(lifecycle)
@@ -151,10 +147,8 @@ class ConfigurationManagementWidget(QWidget):
         self.save_draft_button.clicked.connect(self._save_draft)
         self.copy_button.clicked.connect(self._copy)
         self.validate_button.clicked.connect(self._validate)
-        self.publish_button.clicked.connect(lambda: self._transition("publish", "已发布"))
-        self.activate_button.clicked.connect(lambda: self._transition("activate", "已启用"))
-        self.disable_button.clicked.connect(lambda: self._transition("disable", "已停用"))
-        self.archive_button.clicked.connect(lambda: self._transition("archive", "已归档"))
+        self.activate_button.clicked.connect(self._activate_selected)
+        self.disable_button.clicked.connect(self._disable_selected)
 
     @Slot()
     def refresh(self) -> None:
@@ -173,7 +167,7 @@ class ConfigurationManagementWidget(QWidget):
             values = (
                 configuration.product_code,
                 configuration.version,
-                record.status.value,
+                self._status_text(record),
                 "" if configuration.bom_version_id is None else str(configuration.bom_version_id),
                 record.created_at.isoformat(),
                 record.created_by,
@@ -182,18 +176,27 @@ class ConfigurationManagementWidget(QWidget):
                 self.configuration_table.setItem(row, column, readable_item(value))
         if self._records:
             self.configuration_table.selectRow(0)
+            self._render_selected()
         else:
             self.editor_label.setText("没有匹配的配置")
             self.assignment_table.setRowCount(0)
+            self.activate_button.setEnabled(False)
+            self.disable_button.setEnabled(False)
 
     @Slot()
     def _render_selected(self) -> None:
         record = self._selected()
         if record is None:
+            self.activate_button.setEnabled(False)
+            self.disable_button.setEnabled(False)
             return
+        active = record.status is ConfigurationStatus.ACTIVE
+        self.activate_button.setEnabled(not active)
+        self.disable_button.setEnabled(active)
         configuration = record.configuration
         self.editor_label.setText(
-            f"{configuration.product_code}/{configuration.version} | {record.status.value} | "
+            f"{configuration.product_code}/{configuration.version} | "
+            f"{self._status_text(record)} | "
             f"创建人 {record.created_by}"
         )
         assignments = sorted(configuration.assignments.items())
@@ -259,7 +262,7 @@ class ConfigurationManagementWidget(QWidget):
             return
         self.refresh()
         self._select_configuration(configuration.product_code, configuration.version)
-        self._show_success("草稿已保存")
+        self._show_success("修改已保存")
         self.configurations_changed.emit()
 
     @Slot()
@@ -301,10 +304,11 @@ class ConfigurationManagementWidget(QWidget):
         self.new_version_input.clear()
         self.refresh()
         self._select_configuration(configuration.product_code, new_version)
-        self._show_success(f"已复制为草稿 {new_version}")
+        self._show_success(f"已复制新版本 {new_version}")
         self.configurations_changed.emit()
 
-    def _transition(self, operation: str, success: str) -> None:
+    @Slot()
+    def _activate_selected(self) -> None:
         record = self._selected()
         if record is None:
             self._show_error("请先选择产品配置")
@@ -312,7 +316,40 @@ class ConfigurationManagementWidget(QWidget):
             return
         configuration = record.configuration
         try:
-            getattr(self._repository, operation)(
+            actor = self._operator_provider()
+            if record.status is ConfigurationStatus.DRAFT:
+                self._repository.publish(
+                    configuration.product_code,
+                    configuration.version,
+                    actor=actor,
+                )
+            self._repository.activate(
+                configuration.product_code,
+                configuration.version,
+                actor=actor,
+            )
+        except (LookupError, ValueError) as error:
+            self._show_error(str(error))
+            self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
+            return
+        self.refresh()
+        self._select_configuration(configuration.product_code, configuration.version)
+        self._show_success(
+            f"已启用 {configuration.product_code}/{configuration.version}"
+        )
+        self._announcer.announce(VoicePrompt.CONFIGURATION_ACTIVATED)
+        self.configurations_changed.emit()
+
+    @Slot()
+    def _disable_selected(self) -> None:
+        record = self._selected()
+        if record is None:
+            self._show_error("请先选择产品配置")
+            self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
+            return
+        configuration = record.configuration
+        try:
+            self._repository.disable(
                 configuration.product_code,
                 configuration.version,
                 actor=self._operator_provider(),
@@ -323,16 +360,17 @@ class ConfigurationManagementWidget(QWidget):
             return
         self.refresh()
         self._select_configuration(configuration.product_code, configuration.version)
-        self._show_success(f"{success} {configuration.product_code}/{configuration.version}")
-        self._announcer.announce(
-            {
-                "publish": VoicePrompt.CONFIGURATION_PUBLISHED,
-                "activate": VoicePrompt.CONFIGURATION_ACTIVATED,
-                "disable": VoicePrompt.CONFIGURATION_DISABLED,
-                "archive": VoicePrompt.CONFIGURATION_ARCHIVED,
-            }[operation]
+        self._show_success(
+            f"已停用 {configuration.product_code}/{configuration.version}"
         )
+        self._announcer.announce(VoicePrompt.CONFIGURATION_DISABLED)
         self.configurations_changed.emit()
+
+    @staticmethod
+    def _status_text(record: ProductConfigurationRecord) -> str:
+        if record.status is ConfigurationStatus.ACTIVE:
+            return "启用"
+        return "停用"
 
     def _select_configuration(self, product_code: str, version: str) -> None:
         for row, record in enumerate(self._records):

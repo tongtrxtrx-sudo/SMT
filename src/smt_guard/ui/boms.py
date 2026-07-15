@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from smt_guard.bom import BomVersion
+from smt_guard.bom import BomStatus, BomVersion
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.ui.errors import operator_error_message
 from smt_guard.ui.tables import readable_item, set_column_widths
@@ -98,17 +98,10 @@ class BomManagementWidget(QWidget):
         layout.addWidget(splitter, 1)
 
         actions = QHBoxLayout()
-        self.publish_button = QPushButton("发布")
         self.activate_button = QPushButton("启用")
-        self.obsolete_button = QPushButton("作废")
-        self.archive_button = QPushButton("归档")
-        for button in (
-            self.publish_button,
-            self.activate_button,
-            self.obsolete_button,
-            self.archive_button,
-        ):
-            actions.addWidget(button)
+        self.disable_button = QPushButton("停用")
+        actions.addWidget(self.activate_button)
+        actions.addWidget(self.disable_button)
         actions.addStretch(1)
         layout.addLayout(actions)
 
@@ -128,10 +121,8 @@ class BomManagementWidget(QWidget):
         self.refresh_button.clicked.connect(self.refresh)
         self.product_filter.returnPressed.connect(self.refresh)
         self.version_table.itemSelectionChanged.connect(self._render_selected)
-        self.publish_button.clicked.connect(lambda: self._transition("publish", "已发布"))
-        self.activate_button.clicked.connect(lambda: self._transition("activate", "已启用"))
-        self.obsolete_button.clicked.connect(lambda: self._transition("obsolete", "已作废"))
-        self.archive_button.clicked.connect(lambda: self._transition("archive", "已归档"))
+        self.activate_button.clicked.connect(self._activate_selected)
+        self.disable_button.clicked.connect(self._disable_selected)
         self.compare_button.clicked.connect(self._compare)
 
     @Slot()
@@ -145,7 +136,7 @@ class BomManagementWidget(QWidget):
             values = (
                 version.document.product.material_code,
                 version.version,
-                version.status.value,
+                self._status_text(version),
                 version.source_filename,
                 version.source_sha256,
                 version.imported_at.isoformat(),
@@ -160,15 +151,23 @@ class BomManagementWidget(QWidget):
             self.version_table.selectRow(0)
             if len(self._versions) > 1:
                 self.compare_second.setCurrentIndex(1)
+            self._render_selected()
         else:
             self.detail_label.setText("没有匹配的 BOM 版本")
             self.material_table.setRowCount(0)
+            self.activate_button.setEnabled(False)
+            self.disable_button.setEnabled(False)
 
     @Slot()
     def _render_selected(self) -> None:
         version = self._selected()
         if version is None:
+            self.activate_button.setEnabled(False)
+            self.disable_button.setEnabled(False)
             return
+        active = version.status is BomStatus.ACTIVE
+        self.activate_button.setEnabled(not active)
+        self.disable_button.setEnabled(active)
         product = version.document.product
         self.detail_label.setText(
             f"产品：{product.material_code} {product.name}\n"
@@ -195,7 +194,8 @@ class BomManagementWidget(QWidget):
         row = self.version_table.currentRow()
         return self._versions[row] if 0 <= row < len(self._versions) else None
 
-    def _transition(self, operation: str, success: str) -> None:
+    @Slot()
+    def _activate_selected(self) -> None:
         version = self._selected()
         if version is None:
             self._show_error("请先选择 BOM 版本")
@@ -203,7 +203,29 @@ class BomManagementWidget(QWidget):
             return
         product = version.document.product.material_code
         try:
-            getattr(self._repository, operation)(
+            actor = self._operator_provider()
+            if version.status is BomStatus.DRAFT:
+                self._repository.publish(product, version.version, actor=actor)
+            self._repository.activate(product, version.version, actor=actor)
+        except (LookupError, ValueError) as error:
+            self._show_error(operator_error_message(error))
+            self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
+            return
+        self.refresh()
+        self._show_success(f"已启用 {product}/{version.version}")
+        self._announcer.announce(VoicePrompt.BOM_ACTIVATED)
+        self.bom_changed.emit()
+
+    @Slot()
+    def _disable_selected(self) -> None:
+        version = self._selected()
+        if version is None:
+            self._show_error("请先选择 BOM 版本")
+            self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
+            return
+        product = version.document.product.material_code
+        try:
+            self._repository.obsolete(
                 product, version.version, actor=self._operator_provider()
             )
         except (LookupError, ValueError) as error:
@@ -211,16 +233,15 @@ class BomManagementWidget(QWidget):
             self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
             return
         self.refresh()
-        self._show_success(f"{success} {product}/{version.version}")
-        self._announcer.announce(
-            {
-                "publish": VoicePrompt.BOM_PUBLISHED,
-                "activate": VoicePrompt.BOM_ACTIVATED,
-                "obsolete": VoicePrompt.BOM_OBSOLETED,
-                "archive": VoicePrompt.BOM_ARCHIVED,
-            }[operation]
-        )
+        self._show_success(f"已停用 {product}/{version.version}")
+        self._announcer.announce(VoicePrompt.BOM_DISABLED)
         self.bom_changed.emit()
+
+    @staticmethod
+    def _status_text(version: BomVersion) -> str:
+        if version.status is BomStatus.ACTIVE:
+            return "启用"
+        return "停用"
 
     @Slot()
     def _compare(self) -> None:
