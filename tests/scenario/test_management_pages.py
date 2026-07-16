@@ -281,11 +281,15 @@ class ManagementPageTests(unittest.TestCase):
         self.assertEqual(2, audit_widget.audit_table.rowCount())
         first_action = audit_widget.audit_table.item(0, 4)
         assert first_action is not None
-        self.assertEqual("INTERRUPT", first_action.text())
+        self.assertEqual("中断", first_action.text())
+        self.assertEqual("INTERRUPT", first_action.toolTip())
         entity_key = audit_widget.audit_table.item(0, 3)
         assert entity_key is not None
         self.assertEqual(entity_key.text(), entity_key.toolTip())
-        self.assertGreaterEqual(audit_widget.audit_table.columnWidth(3), 240)
+        self.assertTrue(audit_widget.audit_table.isColumnHidden(6))
+        self.assertTrue(audit_widget.audit_table.isColumnHidden(7))
+        self.assertIn("生产运行", audit_widget.detail_title.text())
+        self.assertIn("RUN-UI", audit_widget.detail_meta.text())
         self.assertEqual(RunStatus.INTERRUPTED, runs.get("RUN-UI").status)
         self.assertIsInstance(audit_widget.started_from_input, QDateTimeEdit)
         self.assertNotIn("ISO", audit_widget.status_label.text())

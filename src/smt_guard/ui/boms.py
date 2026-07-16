@@ -19,6 +19,13 @@ from PySide6.QtWidgets import (
 
 from smt_guard.bom import BomStatus, BomVersion
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
+from smt_guard.ui.components import (
+    PageHeader,
+    content_card,
+    prepare_table,
+    section_heading,
+    set_feedback,
+)
 from smt_guard.ui.errors import operator_error_message
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import readable_item, set_column_widths
@@ -63,20 +70,39 @@ class BomManagementWidget(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        title = QLabel("BOM 版本管理")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setSpacing(10)
+        layout.addWidget(
+            PageHeader(
+                "BOM 版本",
+                "查看物料清单来源与版本状态；启用、停用和版本比较互相分区。",
+            )
+        )
+        query_card = content_card(object_name="filterCard")
+        query_layout = QVBoxLayout(query_card)
+        query_layout.addWidget(section_heading("筛选 BOM", "按产品编码快速定位版本"))
         query = QHBoxLayout()
         self.product_filter = QLineEdit()
         self.product_filter.setPlaceholderText("按产品编码筛选")
+        self.product_filter.setClearButtonEnabled(True)
         self.refresh_button = QPushButton("刷新")
         query.addWidget(self.product_filter, 1)
         query.addWidget(self.refresh_button)
-        layout.addLayout(query)
+        query_layout.addLayout(query)
+        layout.addWidget(query_card)
 
         splitter = QSplitter()
+        version_card = content_card()
+        version_layout = QVBoxLayout(version_card)
+        version_heading = QHBoxLayout()
+        version_heading.addWidget(section_heading("版本列表", "选择版本查看物料和来源"), 1)
+        self.version_count_chip = QLabel("0 个")
+        self.version_count_chip.setProperty("metricChip", True)
+        self.version_count_chip.setProperty("metricTone", "primary")
+        version_heading.addWidget(self.version_count_chip)
+        version_layout.addLayout(version_heading)
         self.version_table = QTableWidget(0, len(self.HEADERS))
         self.version_table.setHorizontalHeaderLabels(self.HEADERS)
+        prepare_table(self.version_table)
         self.version_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.version_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.version_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -86,10 +112,22 @@ class BomManagementWidget(QWidget):
         self.version_table.verticalHeader().setVisible(False)
         set_column_widths(self.version_table, (120, 150, 80, 70, 130))
         self.version_table.horizontalHeader().setStretchLastSection(True)
-        splitter.addWidget(self.version_table)
-        detail = QWidget()
+        version_layout.addWidget(self.version_table, 1)
+        splitter.addWidget(version_card)
+        detail = content_card(object_name="detailCard")
         detail.setMaximumWidth(580)
         detail_layout = QVBoxLayout(detail)
+        detail_layout.addWidget(section_heading("版本详情", "低频来源信息与物料清单集中展示"))
+        metrics = QHBoxLayout()
+        self.bom_status_chip = QLabel("未选择")
+        self.bom_material_chip = QLabel("物料 0")
+        for chip in (self.bom_status_chip, self.bom_material_chip):
+            chip.setProperty("metricChip", True)
+        self.bom_status_chip.setProperty("metricTone", "primary")
+        metrics.addWidget(self.bom_status_chip)
+        metrics.addWidget(self.bom_material_chip)
+        metrics.addStretch(1)
+        detail_layout.addLayout(metrics)
         self.detail_label = QLabel("请选择 BOM 版本")
         self.detail_label.setWordWrap(True)
         detail_layout.addWidget(self.detail_label)
@@ -97,10 +135,21 @@ class BomManagementWidget(QWidget):
         self.import_button.setProperty("actionRole", "primary")
         self.import_button.hide()
         detail_layout.addWidget(self.import_button)
+        actions = QHBoxLayout()
+        self.activate_button = QPushButton("启用")
+        self.activate_button.setProperty("actionRole", "success")
+        self.disable_button = QPushButton("停用")
+        self.disable_button.setProperty("actionRole", "danger")
+        actions.addWidget(self.activate_button)
+        actions.addWidget(self.disable_button)
+        actions.addStretch(1)
+        detail_layout.addLayout(actions)
+        detail_layout.addWidget(section_heading("物料明细"))
         self.material_table = QTableWidget(0, 5)
         self.material_table.setHorizontalHeaderLabels(
             ("物料编码", "名称", "规格", "单位用量", "分类")
         )
+        prepare_table(self.material_table)
         self.material_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.material_table.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -112,16 +161,9 @@ class BomManagementWidget(QWidget):
         splitter.setSizes((600, 600))
         layout.addWidget(splitter, 1)
 
-        actions = QHBoxLayout()
-        self.activate_button = QPushButton("启用")
-        self.activate_button.setProperty("actionRole", "success")
-        self.disable_button = QPushButton("停用")
-        self.disable_button.setProperty("actionRole", "danger")
-        actions.addWidget(self.activate_button)
-        actions.addWidget(self.disable_button)
-        actions.addStretch(1)
-        layout.addLayout(actions)
-
+        compare_card = content_card(object_name="actionCard")
+        compare_layout = QVBoxLayout(compare_card)
+        compare_layout.addWidget(section_heading("版本比较", "对比两个 BOM 的新增、删除和变化物料"))
         compare = QHBoxLayout()
         self.compare_first = QComboBox()
         self.compare_second = QComboBox()
@@ -131,8 +173,10 @@ class BomManagementWidget(QWidget):
         compare.addWidget(self.compare_second)
         compare.addWidget(self.compare_button)
         compare.addWidget(self.compare_label, 1)
-        layout.addLayout(compare)
+        compare_layout.addLayout(compare)
+        layout.addWidget(compare_card)
         self.status_label = QLabel("就绪")
+        set_feedback(self.status_label, "neutral", "就绪")
         layout.addWidget(self.status_label)
 
         self.refresh_button.clicked.connect(self.refresh)
@@ -147,6 +191,7 @@ class BomManagementWidget(QWidget):
     def refresh(self) -> None:
         product = self.product_filter.text().strip()
         self._versions = self._repository.list_versions(product or None)
+        self.version_count_chip.setText(f"{len(self._versions)} 个")
         self.version_table.setRowCount(len(self._versions))
         self.compare_first.clear()
         self.compare_second.clear()
@@ -172,6 +217,8 @@ class BomManagementWidget(QWidget):
             self.status_label.setText(f"找到 {len(self._versions)} 个 BOM 版本")
         else:
             self.detail_label.setText("没有匹配的 BOM 版本，请先导入 BOM")
+            self.bom_status_chip.setText("未选择")
+            self.bom_material_chip.setText("物料 0")
             self.import_button.show()
             self.material_table.setRowCount(0)
             self.activate_button.setEnabled(False)
@@ -189,6 +236,13 @@ class BomManagementWidget(QWidget):
         self.activate_button.setEnabled(not active)
         self.disable_button.setEnabled(active)
         product = version.document.product
+        self.bom_status_chip.setText(self._status_text(version))
+        self.bom_status_chip.setProperty(
+            "metricTone", "success" if active else "danger"
+        )
+        self.bom_status_chip.style().unpolish(self.bom_status_chip)
+        self.bom_status_chip.style().polish(self.bom_status_chip)
+        self.bom_material_chip.setText(f"物料 {len(version.document.materials)}")
         self.detail_label.setText(
             f"产品：{product.material_code} {product.name}\n"
             f"BOM：{product.bom_number} {product.bom_name}\n"
@@ -280,9 +334,7 @@ class BomManagementWidget(QWidget):
         )
 
     def _show_success(self, message: str) -> None:
-        self.status_label.setStyleSheet("color: #18794e;")
-        self.status_label.setText(message)
+        set_feedback(self.status_label, "success", message)
 
     def _show_error(self, message: str) -> None:
-        self.status_label.setStyleSheet("color: #b42318;")
-        self.status_label.setText(message)
+        set_feedback(self.status_label, "error", message)

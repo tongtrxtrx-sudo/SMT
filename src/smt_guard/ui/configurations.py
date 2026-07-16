@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from typing import Protocol
 
-from PySide6.QtCore import Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -19,6 +19,13 @@ from PySide6.QtWidgets import (
 from smt_guard.configuration import ConfigurationStatus, ProductConfigurationRecord
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.scan import ProductConfiguration
+from smt_guard.ui.components import (
+    PageHeader,
+    content_card,
+    prepare_table,
+    section_heading,
+    set_feedback,
+)
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import readable_item, set_column_widths
 
@@ -77,18 +84,36 @@ class ConfigurationManagementWidget(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        title = QLabel("产品站位配置管理")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setSpacing(10)
+        layout.addWidget(
+            PageHeader(
+                "产品配置",
+                "选择产品版本查看站位物料关系；修改仅在草稿版本开放。",
+            )
+        )
+        filter_card = content_card(object_name="filterCard")
+        filter_layout = QVBoxLayout(filter_card)
+        filter_layout.addWidget(section_heading("筛选配置", "按产品编码或版本定位"))
         top = QHBoxLayout()
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText("按产品或版本筛选")
+        self.filter_input.setClearButtonEnabled(True)
         self.refresh_button = QPushButton("刷新")
         top.addWidget(self.filter_input, 1)
         top.addWidget(self.refresh_button)
-        layout.addLayout(top)
+        filter_layout.addLayout(top)
+        layout.addWidget(filter_card)
 
         splitter = QSplitter()
+        list_card = content_card()
+        list_layout = QVBoxLayout(list_card)
+        list_heading = QHBoxLayout()
+        list_heading.addWidget(section_heading("配置版本", "选择后在右侧查看和维护"), 1)
+        self.configuration_count_chip = QLabel("0 个")
+        self.configuration_count_chip.setProperty("metricChip", True)
+        self.configuration_count_chip.setProperty("metricTone", "primary")
+        list_heading.addWidget(self.configuration_count_chip)
+        list_layout.addLayout(list_heading)
         self.configuration_table = QTableWidget(0, 6)
         self.configuration_table.setHorizontalHeaderLabels(
             ("产品", "版本", "状态", "BOM 版本 ID", "创建时间", "创建人")
@@ -96,23 +121,47 @@ class ConfigurationManagementWidget(QWidget):
         self.configuration_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
         )
+        prepare_table(self.configuration_table)
         self.configuration_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.configuration_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.configuration_table.verticalHeader().setVisible(False)
-        set_column_widths(self.configuration_table, (120, 170, 90, 120, 190, 120))
-        splitter.addWidget(self.configuration_table)
-        editor = QWidget()
+        self.configuration_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        set_column_widths(self.configuration_table, (115, 170, 75, 105, 190, 120))
+        self.configuration_table.setColumnHidden(4, True)
+        self.configuration_table.setColumnHidden(5, True)
+        self.configuration_table.horizontalHeader().setStretchLastSection(True)
+        list_layout.addWidget(self.configuration_table, 1)
+        splitter.addWidget(list_card)
+        editor = content_card(object_name="detailCard")
         editor_layout = QVBoxLayout(editor)
         self.editor_label = QLabel("请选择配置")
+        self.editor_label.setObjectName("sectionTitle")
         editor_layout.addWidget(self.editor_label)
+        summary = QHBoxLayout()
+        self.configuration_status_chip = QLabel("未选择")
+        self.assignment_count_chip = QLabel("站位 0")
+        for chip in (self.configuration_status_chip, self.assignment_count_chip):
+            chip.setProperty("metricChip", True)
+        self.configuration_status_chip.setProperty("metricTone", "primary")
+        summary.addWidget(self.configuration_status_chip)
+        summary.addWidget(self.assignment_count_chip)
+        summary.addStretch(1)
+        editor_layout.addLayout(summary)
         self.import_button = QPushButton("前往导入配置")
         self.import_button.setProperty("actionRole", "primary")
         self.import_button.hide()
         editor_layout.addWidget(self.import_button)
+        editor_layout.addWidget(section_heading("站位物料关系", "草稿版本可直接编辑表格"))
         self.assignment_table = QTableWidget(0, 3)
         self.assignment_table.setHorizontalHeaderLabels(("设备编码", "站位编码", "物料编码"))
+        prepare_table(self.assignment_table)
         self.assignment_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        set_column_widths(self.assignment_table, (150, 150, 240))
+        self.assignment_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        set_column_widths(self.assignment_table, (125, 125, 220))
+        self.assignment_table.horizontalHeader().setStretchLastSection(True)
         editor_layout.addWidget(self.assignment_table, 1)
         row_actions = QHBoxLayout()
         self.add_row_button = QPushButton("新增行")
@@ -123,29 +172,37 @@ class ConfigurationManagementWidget(QWidget):
         row_actions.addWidget(self.remove_row_button)
         row_actions.addWidget(self.save_draft_button)
         editor_layout.addLayout(row_actions)
-        splitter.addWidget(editor)
-        splitter.setSizes((600, 600))
-        layout.addWidget(splitter, 1)
-
-        lifecycle = QHBoxLayout()
-        self.new_version_input = QLineEdit()
-        self.new_version_input.setPlaceholderText("新版本号")
-        self.copy_button = QPushButton("复制新版本")
+        lifecycle_actions = QHBoxLayout()
         self.validate_button = QPushButton("校验")
         self.activate_button = QPushButton("启用")
         self.activate_button.setProperty("actionRole", "success")
         self.disable_button = QPushButton("停用")
         self.disable_button.setProperty("actionRole", "danger")
+        lifecycle_actions.addWidget(self.validate_button)
+        lifecycle_actions.addWidget(self.activate_button)
+        lifecycle_actions.addWidget(self.disable_button)
+        lifecycle_actions.addStretch(1)
+        editor_layout.addLayout(lifecycle_actions)
+        splitter.addWidget(editor)
+        splitter.setSizes((600, 600))
+        layout.addWidget(splitter, 1)
+
+        version_card = content_card(object_name="actionCard")
+        version_layout = QVBoxLayout(version_card)
+        version_layout.addWidget(
+            section_heading("复制为新版本", "从当前配置复制草稿，再修改和校验")
+        )
+        lifecycle = QHBoxLayout()
+        self.new_version_input = QLineEdit()
+        self.new_version_input.setPlaceholderText("新版本号")
+        self.copy_button = QPushButton("复制新版本")
+        self.copy_button.setProperty("actionRole", "primary")
         lifecycle.addWidget(self.new_version_input)
-        for button in (
-            self.copy_button,
-            self.validate_button,
-            self.activate_button,
-            self.disable_button,
-        ):
-            lifecycle.addWidget(button)
-        layout.addLayout(lifecycle)
+        lifecycle.addWidget(self.copy_button)
+        version_layout.addLayout(lifecycle)
+        layout.addWidget(version_card)
         self.status_label = QLabel("就绪")
+        set_feedback(self.status_label, "neutral", "就绪")
         layout.addWidget(self.status_label)
 
         self.refresh_button.clicked.connect(self.refresh)
@@ -171,6 +228,7 @@ class ConfigurationManagementWidget(QWidget):
             or query in item.configuration.product_code.casefold()
             or query in item.configuration.version.casefold()
         ]
+        self.configuration_count_chip.setText(f"{len(self._records)} 个")
         self.configuration_table.setRowCount(len(self._records))
         for row, record in enumerate(self._records):
             configuration = record.configuration
@@ -190,6 +248,8 @@ class ConfigurationManagementWidget(QWidget):
             self._render_selected()
         else:
             self.editor_label.setText("没有匹配的配置，请先完成导入配置")
+            self.configuration_status_chip.setText("未选择")
+            self.assignment_count_chip.setText("站位 0")
             self.import_button.show()
             self.assignment_table.setRowCount(0)
             self.activate_button.setEnabled(False)
@@ -212,6 +272,13 @@ class ConfigurationManagementWidget(QWidget):
             f"创建人 {record.created_by}"
         )
         assignments = sorted(configuration.assignments.items())
+        self.configuration_status_chip.setText(self._status_text(record))
+        self.configuration_status_chip.setProperty(
+            "metricTone", "success" if active else "danger"
+        )
+        self.configuration_status_chip.style().unpolish(self.configuration_status_chip)
+        self.configuration_status_chip.style().polish(self.configuration_status_chip)
+        self.assignment_count_chip.setText(f"站位 {len(assignments)}")
         self.assignment_table.setRowCount(len(assignments))
         for row, ((device, station), material) in enumerate(assignments):
             for column, value in enumerate((device, station, material)):
@@ -392,9 +459,7 @@ class ConfigurationManagementWidget(QWidget):
                 return
 
     def _show_success(self, message: str) -> None:
-        self.status_label.setStyleSheet("color: #18794e;")
-        self.status_label.setText(message)
+        set_feedback(self.status_label, "success", message)
 
     def _show_error(self, message: str) -> None:
-        self.status_label.setStyleSheet("color: #b42318;")
-        self.status_label.setText(message)
+        set_feedback(self.status_label, "error", message)

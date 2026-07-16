@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from smt_guard.bom import BomDocument
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.importing import ImportResult
+from smt_guard.ui.components import PageHeader, prepare_table
 from smt_guard.ui.errors import operator_error_message
 from smt_guard.ui.tables import readable_item, set_column_widths
 
@@ -121,9 +122,13 @@ class ConfigurationImportWidget(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        title = QLabel("导入配置")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setSpacing(10)
+        layout.addWidget(
+            PageHeader(
+                "导入配置",
+                "按顺序导入 BOM 与站位表，系统校验通过后才会启用产品配置。",
+            )
+        )
         self.step_indicator = QLabel()
         self.step_indicator.setStyleSheet("font-size: 17px; font-weight: 600; padding: 8px;")
         layout.addWidget(self.step_indicator)
@@ -203,10 +208,11 @@ class ConfigurationImportWidget(QWidget):
 
         self.assignment_table = QTableWidget(0, 3)
         self.assignment_table.setHorizontalHeaderLabels(("设备编码", "站位编码", "物料编码"))
+        prepare_table(self.assignment_table)
         self.assignment_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.assignment_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.assignment_table.verticalHeader().setVisible(False)
         set_column_widths(self.assignment_table, (150, 150, 240))
+        self.assignment_table.horizontalHeader().setStretchLastSection(True)
         validation_layout.addWidget(self.assignment_table, 1)
 
         validation_actions = QHBoxLayout()

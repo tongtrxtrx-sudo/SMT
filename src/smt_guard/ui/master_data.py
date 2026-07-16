@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from typing import Protocol
 
-from PySide6.QtCore import Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -22,6 +22,14 @@ from PySide6.QtWidgets import (
 )
 
 from smt_guard.master_data import Device, MasterDataError, Station
+from smt_guard.ui.components import (
+    PageHeader,
+    content_card,
+    prepare_table,
+    section_heading,
+    set_feedback,
+)
+from smt_guard.ui.tables import set_column_widths
 
 
 class MasterDataRepository(Protocol):
@@ -143,9 +151,13 @@ class DeviceStationWidget(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        title = QLabel("设备与站位管理")
-        title.setObjectName("pageTitle")
-        root.addWidget(title)
+        root.setSpacing(10)
+        root.addWidget(
+            PageHeader(
+                "设备与站位",
+                "先选择设备，再维护该设备的站位；批量创建等低频操作默认收起。",
+            )
+        )
 
         splitter = QSplitter()
         splitter.addWidget(self._build_device_panel())
@@ -155,11 +167,19 @@ class DeviceStationWidget(QWidget):
 
         self.status_label = QLabel("就绪")
         self.status_label.setObjectName("feedbackLabel")
+        set_feedback(self.status_label, "neutral", "就绪")
         root.addWidget(self.status_label)
 
     def _build_device_panel(self) -> QWidget:
-        panel = QGroupBox("设备")
+        panel = content_card()
         layout = QVBoxLayout(panel)
+        heading = QHBoxLayout()
+        heading.addWidget(section_heading("设备", "选择后可编辑名称、产线和状态"), 1)
+        self.device_count_label = QLabel("0 台")
+        self.device_count_label.setProperty("metricChip", True)
+        self.device_count_label.setProperty("metricTone", "primary")
+        heading.addWidget(self.device_count_label)
+        layout.addLayout(heading)
         query = QHBoxLayout()
         self.device_query_input = QLineEdit()
         self.device_query_input.setPlaceholderText("按编码、名称或产线筛选")
@@ -168,6 +188,13 @@ class DeviceStationWidget(QWidget):
         query.addWidget(self.device_query_input, 1)
         query.addWidget(self.device_status_filter)
         layout.addLayout(query)
+
+        self.device_table = self._table(("设备编码", "设备名称", "产线", "状态"))
+        set_column_widths(self.device_table, (105, 150, 105, 70))
+        self.device_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.device_table, 1)
+
+        layout.addWidget(section_heading("设备信息", "修改现有设备，或输入新编码创建设备"))
         form = QFormLayout()
         self.device_code_input = QLineEdit()
         self.device_name_input = QLineEdit()
@@ -192,16 +219,20 @@ class DeviceStationWidget(QWidget):
         buttons.addWidget(self.disable_device_button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
-
-        self.device_table = self._table(("设备编码", "设备名称", "产线", "状态"))
-        layout.addWidget(self.device_table)
         return panel
 
     def _build_station_panel(self) -> QWidget:
-        panel = QGroupBox("站位")
+        panel = content_card()
         layout = QVBoxLayout(panel)
-        self.selected_device_label = QLabel("当前设备：未选择")
-        layout.addWidget(self.selected_device_label)
+        heading = QHBoxLayout()
+        self.selected_device_label = QLabel("站位 · 尚未选择设备")
+        self.selected_device_label.setObjectName("sectionTitle")
+        heading.addWidget(self.selected_device_label)
+        heading.addStretch(1)
+        self.station_count_label = QLabel("0 个")
+        self.station_count_label.setProperty("metricChip", True)
+        heading.addWidget(self.station_count_label)
+        layout.addLayout(heading)
 
         query = QHBoxLayout()
         self.station_query_input = QLineEdit()
@@ -212,6 +243,12 @@ class DeviceStationWidget(QWidget):
         query.addWidget(self.station_status_filter)
         layout.addLayout(query)
 
+        self.station_table = self._table(("站位编码", "站位名称", "状态", "已引用"))
+        set_column_widths(self.station_table, (110, 170, 70, 70))
+        self.station_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.station_table, 1)
+
+        layout.addWidget(section_heading("站位信息", "新增或修改当前设备下的单个站位"))
         single_form = QFormLayout()
         self.station_code_input = QLineEdit()
         self.station_name_input = QLineEdit()
@@ -219,11 +256,29 @@ class DeviceStationWidget(QWidget):
         self.add_station_button.setProperty("actionRole", "primary")
         single_form.addRow("站位编码", self.station_code_input)
         single_form.addRow("站位名称", self.station_name_input)
-        single_form.addRow("", self.add_station_button)
         layout.addLayout(single_form)
 
-        bulk_group = QGroupBox("批量新增")
-        bulk_form = QFormLayout(bulk_group)
+        station_buttons = QHBoxLayout()
+        self.update_station_button = QPushButton("保存修改")
+        self.update_station_button.setProperty("actionRole", "primary")
+        self.enable_station_button = QPushButton("启用")
+        self.enable_station_button.setProperty("actionRole", "success")
+        self.disable_station_button = QPushButton("停用")
+        self.disable_station_button.setProperty("actionRole", "danger")
+        station_buttons.addWidget(self.add_station_button)
+        station_buttons.addWidget(self.update_station_button)
+        station_buttons.addWidget(self.enable_station_button)
+        station_buttons.addWidget(self.disable_station_button)
+        station_buttons.addStretch(1)
+        layout.addLayout(station_buttons)
+
+        self.bulk_toggle_button = QPushButton("展开批量创建站位")
+        self.bulk_toggle_button.setCheckable(True)
+        self.bulk_toggle_button.setProperty("actionRole", "secondary")
+        layout.addWidget(self.bulk_toggle_button)
+        self.bulk_group = QGroupBox("批量创建站位")
+        self.bulk_group.setVisible(False)
+        bulk_form = QFormLayout(self.bulk_group)
         self.bulk_prefix_input = QLineEdit("F-")
         self.bulk_start_input = self._spin_box(1, 9999, 1)
         self.bulk_end_input = self._spin_box(1, 9999, 60)
@@ -235,23 +290,7 @@ class DeviceStationWidget(QWidget):
         bulk_form.addRow("结束编号", self.bulk_end_input)
         bulk_form.addRow("数字宽度", self.bulk_width_input)
         bulk_form.addRow("", self.bulk_add_button)
-        layout.addWidget(bulk_group)
-
-        station_buttons = QHBoxLayout()
-        self.update_station_button = QPushButton("保存修改")
-        self.update_station_button.setProperty("actionRole", "primary")
-        self.enable_station_button = QPushButton("启用")
-        self.enable_station_button.setProperty("actionRole", "success")
-        self.disable_station_button = QPushButton("停用")
-        self.disable_station_button.setProperty("actionRole", "danger")
-        station_buttons.addWidget(self.update_station_button)
-        station_buttons.addWidget(self.enable_station_button)
-        station_buttons.addWidget(self.disable_station_button)
-        station_buttons.addStretch(1)
-        layout.addLayout(station_buttons)
-
-        self.station_table = self._table(("站位编码", "站位名称", "状态", "已引用"))
-        layout.addWidget(self.station_table)
+        layout.addWidget(self.bulk_group)
         return panel
 
     def _connect_signals(self) -> None:
@@ -266,6 +305,7 @@ class DeviceStationWidget(QWidget):
         self.update_station_button.clicked.connect(self._update_station)
         self.enable_station_button.clicked.connect(self._enable_station)
         self.bulk_add_button.clicked.connect(self._bulk_add_stations)
+        self.bulk_toggle_button.toggled.connect(self._toggle_bulk_panel)
         self.disable_station_button.clicked.connect(self._disable_station)
         self.station_query_input.textChanged.connect(self._station_filter_changed)
         self.station_status_filter.currentIndexChanged.connect(self._station_filter_changed)
@@ -305,6 +345,7 @@ class DeviceStationWidget(QWidget):
                 ),
             )
         self.device_table.blockSignals(False)
+        self.device_count_label.setText(f"{len(devices)} 台")
 
         target_row = next(
             (row for row, device in enumerate(devices) if device.code == selected),
@@ -541,11 +582,12 @@ class DeviceStationWidget(QWidget):
     def _refresh_stations(self, preferred_code: str | None = None) -> None:
         device = self._current_device_code()
         if device is None:
-            self.selected_device_label.setText("当前设备：未选择")
+            self.selected_device_label.setText("站位 · 尚未选择设备")
             self.station_table.setRowCount(0)
+            self.station_count_label.setText("0 个")
             return
 
-        self.selected_device_label.setText(f"当前设备：{device}")
+        self.selected_device_label.setText(f"站位 · 当前设备 {device}")
         stations = self._repository.search_stations(
             device,
             self.station_query_input.text(),
@@ -564,6 +606,7 @@ class DeviceStationWidget(QWidget):
                     "是" if station.referenced else "否",
                 ),
             )
+        self.station_count_label.setText(f"{len(stations)} 个")
         target_row = next(
             (row for row, station in enumerate(stations) if station.code == preferred_code),
             0 if stations else -1,
@@ -621,15 +664,18 @@ class DeviceStationWidget(QWidget):
         return device, station
 
     def _show_success(self, message: str) -> None:
-        self.status_label.setProperty("feedbackState", "success")
-        self.status_label.setStyleSheet("color: #18794e;")
-        self.status_label.setText(message)
+        set_feedback(self.status_label, "success", message)
         self.master_data_changed.emit()
 
     def _show_error(self, message: str) -> None:
-        self.status_label.setProperty("feedbackState", "error")
-        self.status_label.setStyleSheet("color: #b42318;")
-        self.status_label.setText(message)
+        set_feedback(self.status_label, "error", message)
+
+    @Slot(bool)
+    def _toggle_bulk_panel(self, expanded: bool) -> None:
+        self.bulk_group.setVisible(expanded)
+        self.bulk_toggle_button.setText(
+            "收起批量创建站位" if expanded else "展开批量创建站位"
+        )
 
     @staticmethod
     def _required(value: str, label: str) -> str:
@@ -655,10 +701,11 @@ class DeviceStationWidget(QWidget):
     def _table(headers: tuple[str, ...]) -> QTableWidget:
         table = QTableWidget(0, len(headers))
         table.setHorizontalHeaderLabels(headers)
+        prepare_table(table)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.verticalHeader().setVisible(False)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         return table
 
     @staticmethod

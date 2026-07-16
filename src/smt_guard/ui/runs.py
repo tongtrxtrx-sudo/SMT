@@ -25,6 +25,12 @@ from PySide6.QtWidgets import (
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.records import Attempt
 from smt_guard.run import ProductionRun, RunStationState, RunStatus
+from smt_guard.ui.components import (
+    PageHeader,
+    content_card,
+    prepare_table,
+    section_heading,
+)
 from smt_guard.ui.date_range import DateRangeFilter
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import readable_item, set_column_widths
@@ -77,9 +83,16 @@ class ProductionRunManagementWidget(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        title = QLabel("生产运行管理")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setSpacing(10)
+        layout.addWidget(
+            PageHeader(
+                "生产运行",
+                "查询生产批次、查看站位进度与扫码记录，并处理恢复或中断。",
+            )
+        )
+        filter_card = content_card(object_name="filterCard")
+        filter_layout = QVBoxLayout(filter_card)
+        filter_layout.addWidget(section_heading("筛选运行", "默认查询最近 7 天"))
         filters = QHBoxLayout()
         self.query_input = QLineEdit()
         self.query_input.setPlaceholderText("运行号、产品或版本")
@@ -96,11 +109,12 @@ class ProductionRunManagementWidget(QWidget):
             self.query_button,
         ):
             filters.addWidget(widget)
-        layout.addLayout(filters)
+        filter_layout.addLayout(filters)
         self.date_range = DateRangeFilter(clock=self._clock, default_days=7)
         self.started_from_input = self.date_range.started_from_input
         self.started_to_input = self.date_range.started_to_input
-        layout.addWidget(self.date_range)
+        filter_layout.addWidget(self.date_range)
+        layout.addWidget(filter_card)
 
         self.start_button = QPushButton("转到扫码开始")
         self.start_button.setProperty("actionRole", "primary")
@@ -115,23 +129,33 @@ class ProductionRunManagementWidget(QWidget):
         self.refresh_button = QPushButton("刷新")
 
         splitter = QSplitter()
+        run_list_card = content_card()
+        run_list_layout = QVBoxLayout(run_list_card)
+        run_list_heading = QHBoxLayout()
+        run_list_heading.addWidget(section_heading("运行列表", "选择后查看右侧详情"), 1)
+        self.run_count_chip = QLabel("0 个")
+        self.run_count_chip.setProperty("metricChip", True)
+        self.run_count_chip.setProperty("metricTone", "primary")
+        run_list_heading.addWidget(self.run_count_chip)
+        run_list_layout.addLayout(run_list_heading)
         self.run_table = QTableWidget(0, 6)
         self.run_table.setHorizontalHeaderLabels(
             ("运行号", "产品 / 版本", "操作员", "状态", "进度", "开始时间")
         )
+        prepare_table(self.run_table)
         self.run_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.run_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.run_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.run_table.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self.run_table.verticalHeader().setVisible(False)
         set_column_widths(
             self.run_table,
-            (160, 170, 90, 80, 70, 140),
+            (160, 140, 75, 65, 55, 115),
         )
         self.run_table.horizontalHeader().setStretchLastSection(True)
-        splitter.addWidget(self.run_table)
+        run_list_layout.addWidget(self.run_table, 1)
+        splitter.addWidget(run_list_card)
         right = QFrame()
         right.setObjectName("runSummaryCard")
         right_layout = QVBoxLayout(right)
@@ -162,6 +186,7 @@ class ProductionRunManagementWidget(QWidget):
         self.station_table.setHorizontalHeaderLabels(
             ("设备", "站位", "要求物料", "状态", "完成时间")
         )
+        prepare_table(self.station_table)
         self.station_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.station_table.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -178,9 +203,9 @@ class ProductionRunManagementWidget(QWidget):
         self.attempt_table.setHorizontalHeaderLabels(
             ("时间", "设备", "站位", "要求物料", "扫码物料", "结果", "重复")
         )
+        prepare_table(self.attempt_table)
         self.attempt_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.attempt_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.attempt_table.verticalHeader().setVisible(False)
         set_column_widths(self.attempt_table, (150, 100, 100, 170, 170, 70, 70))
         attempts_layout.addWidget(self.attempt_table, 1)
         self.detail_tabs.addTab(attempts_page, "扫码记录")
@@ -229,6 +254,7 @@ class ProductionRunManagementWidget(QWidget):
             started_to=started_to,
         )
         self.run_table.setRowCount(len(self._runs))
+        self.run_count_chip.setText(f"{len(self._runs)} 个")
         for row, run in enumerate(self._runs):
             values = (
                 run.run_id,

@@ -164,10 +164,19 @@ QLabel#diagnosticText {
     padding: 6px 10px;
 }
 QFrame#selectionCard, QFrame#scanHero, QFrame#scanInputCard,
-QFrame#historyCard, QFrame#runSummaryCard, QFrame#dropZone {
+QFrame#historyCard, QFrame#runSummaryCard, QFrame#dropZone,
+QFrame#contentCard, QFrame#filterCard, QFrame#detailCard,
+QFrame#actionCard, QFrame#emptyState {
     background-color: #ffffff;
     border: 1px solid #d0d5dd;
     border-radius: 10px;
+}
+QFrame#filterCard, QFrame#actionCard {
+    background-color: #f9fafb;
+}
+QFrame#emptyState {
+    border-style: dashed;
+    background-color: #fcfcfd;
 }
 QFrame#dropZone {
     border: 2px dashed #b2ccff;
@@ -190,6 +199,47 @@ QLabel[summaryChip="true"] {
 QLabel#pageTitle {
     font-size: 22px;
     font-weight: 700;
+}
+QLabel#pageSubtitle {
+    color: #667085;
+    font-size: 13px;
+}
+QLabel#sectionTitle {
+    font-size: 16px;
+    font-weight: 700;
+    color: #344054;
+}
+QLabel#sectionDescription {
+    color: #667085;
+    font-size: 12px;
+}
+QLabel#emptyStateTitle {
+    font-size: 18px;
+    font-weight: 700;
+    color: #344054;
+}
+QLabel#emptyStateDescription {
+    color: #667085;
+}
+QLabel[metricChip="true"] {
+    border-radius: 7px;
+    padding: 8px 12px;
+    font-size: 14px;
+    font-weight: 600;
+    background-color: #f2f4f7;
+    color: #344054;
+}
+QLabel[metricTone="success"] {
+    background-color: #ecfdf3;
+    color: #067647;
+}
+QLabel[metricTone="danger"] {
+    background-color: #fef3f2;
+    color: #b42318;
+}
+QLabel[metricTone="primary"] {
+    background-color: #eff8ff;
+    color: #175cd3;
 }
 QLabel#scanFeedback {
     font-size: 36px;
