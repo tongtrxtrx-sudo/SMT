@@ -8,7 +8,7 @@ from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -98,43 +98,78 @@ class ScanWidget(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(12)
         title = QLabel("扫码作业")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
 
-        run_form = QFormLayout()
+        self.selection_card = QFrame()
+        self.selection_card.setObjectName("selectionCard")
+        selection_layout = QHBoxLayout(self.selection_card)
+        selection_layout.setContentsMargins(14, 10, 14, 10)
+        selection_layout.addWidget(QLabel("产品配置"))
         self.configuration_combo = QComboBox()
+        self.configuration_combo.setMinimumWidth(260)
         self.start_button = QPushButton("开始新运行")
         self.start_button.setProperty("actionRole", "primary")
-        run_form.addRow("产品配置", self.configuration_combo)
-        run_form.addRow("", self.start_button)
-        layout.addLayout(run_form)
         self.import_configuration_button = QPushButton("没有可用配置，前往导入配置")
         self.import_configuration_button.setProperty("actionRole", "primary")
         self.import_configuration_button.hide()
-        layout.addWidget(self.import_configuration_button)
+        selection_layout.addWidget(self.configuration_combo, 1)
+        selection_layout.addWidget(self.start_button)
+        selection_layout.addWidget(self.import_configuration_button)
+        layout.addWidget(self.selection_card)
 
+        self.product_summary_label = QLabel("产品：未选择")
+        self.product_summary_label.setObjectName("productSummary")
+        layout.addWidget(self.product_summary_label)
         self.run_label = QLabel("运行：未开始")
+        self.run_label.setStyleSheet("color: #667085;")
         layout.addWidget(self.run_label)
 
+        self.hero_card = QFrame()
+        self.hero_card.setObjectName("scanHero")
+        hero_layout = QVBoxLayout(self.hero_card)
+        hero_layout.setContentsMargins(22, 18, 22, 18)
+        hero_layout.setSpacing(10)
         self.scanner_status_button = QPushButton("扫码枪等待运行")
         self.scanner_status_button.setEnabled(False)
         self.scanner_status_button.setToolTip("扫码输入框获得焦点后即可接收扫码枪输入")
-        layout.addWidget(self.scanner_status_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        hero_layout.addWidget(
+            self.scanner_status_button, 0, Qt.AlignmentFlag.AlignHCenter
+        )
 
         self.feedback_label = QLabel("请先开始运行")
         self.feedback_label.setObjectName("scanFeedback")
         self.feedback_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.feedback_label.setMinimumHeight(150)
+        self.feedback_label.setMinimumHeight(170)
         self.feedback_label.setWordWrap(True)
-        layout.addWidget(self.feedback_label)
+        hero_layout.addWidget(self.feedback_label)
         self.step_label = QLabel("设备 1  →  站位 2  →  物料 3")
         self.step_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.step_label.setStyleSheet("color: #667085;")
-        layout.addWidget(self.step_label)
+        hero_layout.addWidget(self.step_label)
 
+        material_row = QHBoxLayout()
+        material_row.setSpacing(18)
+        self.expected_label = QLabel("要求物料：-")
+        self.scanned_label = QLabel("扫码物料：-")
+        self.expected_label.setStyleSheet("font-size: 18px; font-weight: 600;")
+        self.scanned_label.setStyleSheet("font-size: 18px; font-weight: 600;")
+        self.expected_label.hide()
+        self.scanned_label.hide()
+        material_row.addStretch(1)
+        material_row.addWidget(self.expected_label)
+        material_row.addWidget(self.scanned_label)
+        material_row.addStretch(1)
+        hero_layout.addLayout(material_row)
+        layout.addWidget(self.hero_card, 1)
+
+        self.input_card = QFrame()
+        self.input_card.setObjectName("scanInputCard")
         scan_row = QHBoxLayout()
+        scan_row.setContentsMargins(12, 10, 12, 10)
         self.scan_input = QLineEdit()
         self.scan_input.setPlaceholderText("扫码后自动提交；也可手动输入后按 Enter")
         self.scan_input.setEnabled(False)
@@ -144,30 +179,34 @@ class ScanWidget(QWidget):
         self.submit_button.setEnabled(False)
         scan_row.addWidget(self.scan_input, 1)
         scan_row.addWidget(self.submit_button)
-        layout.addLayout(scan_row)
+        self.input_card.setLayout(scan_row)
+        layout.addWidget(self.input_card)
 
-        self.expected_label = QLabel("要求物料：-")
-        self.scanned_label = QLabel("扫码物料：-")
-        self.expected_label.setStyleSheet("font-size: 18px; font-weight: 600;")
-        self.scanned_label.setStyleSheet("font-size: 18px; font-weight: 600;")
-        self.expected_label.hide()
-        self.scanned_label.hide()
-        layout.addWidget(self.expected_label)
-        layout.addWidget(self.scanned_label)
-
+        progress_title = QLabel("本次进度")
+        progress_title.setStyleSheet("font-weight: 700;")
+        layout.addWidget(progress_title)
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFormat("%v / %m")
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(24)
         layout.addWidget(self.progress_bar)
+        self.progress_count_label = QLabel("0 / 0")
+        self.progress_count_label.setObjectName("progressCount")
+        self.progress_count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.progress_count_label)
 
+        self.history_card = QFrame()
+        self.history_card.setObjectName("historyCard")
+        history_layout = QVBoxLayout(self.history_card)
+        history_layout.setContentsMargins(12, 8, 12, 8)
         history_row = QHBoxLayout()
         history_row.addWidget(QLabel("最近扫码记录"))
         history_row.addStretch(1)
         self.history_button = QPushButton("展开")
         self.history_button.setCheckable(True)
         history_row.addWidget(self.history_button)
-        layout.addLayout(history_row)
+        history_layout.addLayout(history_row)
 
         self.attempt_table = QTableWidget(0, 7)
         self.attempt_table.setHorizontalHeaderLabels(
@@ -177,7 +216,8 @@ class ScanWidget(QWidget):
         self.attempt_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.attempt_table.verticalHeader().setVisible(False)
         self.attempt_table.setVisible(False)
-        layout.addWidget(self.attempt_table, 1)
+        history_layout.addWidget(self.attempt_table, 1)
+        layout.addWidget(self.history_card)
 
     def _connect_signals(self) -> None:
         self.start_button.clicked.connect(self._start_run)
@@ -186,6 +226,9 @@ class ScanWidget(QWidget):
         self.scanner_status_button.clicked.connect(self.focus_scanner)
         self.history_button.toggled.connect(self._toggle_history)
         self.import_configuration_button.clicked.connect(self.import_requested.emit)
+        self.configuration_combo.currentTextChanged.connect(
+            self._update_product_summary
+        )
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.scan_input:
@@ -212,6 +255,7 @@ class ScanWidget(QWidget):
         self.configuration_combo.setEnabled(has_configurations)
         self.start_button.setEnabled(has_configurations)
         self.import_configuration_button.setVisible(not has_configurations)
+        self._update_product_summary(self.configuration_combo.currentText())
         if self._run is None:
             self.feedback_label.setText(
                 "请选择产品配置并开始运行"
@@ -245,8 +289,12 @@ class ScanWidget(QWidget):
             operator=operator,
         )
         self.run_label.setText(
-            f"运行：{self._run.run_id} | {configuration.product_code}/{configuration.version}"
+            f"运行：{self._run.run_id} · 进度 0/{len(configuration.assignments)}"
         )
+        self.product_summary_label.setText(
+            f"产品：{configuration.product_code} / {configuration.version}"
+        )
+        self.selection_card.hide()
         self.progress_bar.setRange(0, len(configuration.assignments))
         self.progress_bar.setValue(0)
         self.attempt_table.setRowCount(0)
@@ -261,6 +309,7 @@ class ScanWidget(QWidget):
             self._run.interrupt(reason)
             self._run = None
             self._set_scan_controls_enabled(False)
+            self.selection_card.show()
             if reason != "应用关闭":
                 self._announcer.announce(VoicePrompt.RUN_INTERRUPTED)
             self.run_changed.emit()
@@ -289,9 +338,14 @@ class ScanWidget(QWidget):
             return
         configuration = self._run.configuration
         self.run_label.setText(
-            f"运行：{self._run.run_id} | {configuration.product_code}/{configuration.version} | "
-            f"恢复人：{operator}"
+            f"运行：{self._run.run_id} · 进度 "
+            f"{self._run.initial_feedback.completed_stations}/"
+            f"{len(configuration.assignments)} · 恢复人：{operator}"
         )
+        self.product_summary_label.setText(
+            f"产品：{configuration.product_code} / {configuration.version}"
+        )
+        self.selection_card.hide()
         self.progress_bar.setRange(0, len(configuration.assignments))
         self._refresh_attempts()
         self._render_feedback(self._run.initial_feedback)
@@ -310,6 +364,7 @@ class ScanWidget(QWidget):
                 self._run.interrupt(reason)
                 self._run = None
                 self._set_scan_controls_enabled(False)
+                self.selection_card.show()
             else:
                 self._runs.interrupt(
                     run_id,
@@ -396,6 +451,16 @@ class ScanWidget(QWidget):
         self.scanned_label.setVisible(show_material)
         self._render_step_indicator()
         self.progress_bar.setValue(state.completed_stations)
+        self.progress_count_label.setText(
+            f"{state.completed_stations} / {self.progress_bar.maximum()}"
+        )
+        if self._run is not None:
+            self.run_label.setText(
+                f"运行：{self._run.run_id} · 进度 "
+                f"{state.completed_stations}/{self.progress_bar.maximum()}"
+            )
+        if state.complete:
+            self.selection_card.show()
         self._set_scan_controls_enabled(
             self._run is not None and not self._run.completed and not state.complete
         )
@@ -489,4 +554,11 @@ class ScanWidget(QWidget):
         if self._operator_provider is not None:
             return self._operator_provider()
         return self._operator
+
+    @Slot(str)
+    def _update_product_summary(self, configuration: str) -> None:
+        if self._run is None:
+            self.product_summary_label.setText(
+                f"产品：{configuration}" if configuration else "产品：未选择"
+            )
     run_changed = Signal()

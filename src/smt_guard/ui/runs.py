@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -101,6 +102,18 @@ class ProductionRunManagementWidget(QWidget):
         self.started_to_input = self.date_range.started_to_input
         layout.addWidget(self.date_range)
 
+        self.start_button = QPushButton("转到扫码开始")
+        self.start_button.setProperty("actionRole", "primary")
+        self.resume_button = QPushButton("恢复所选运行")
+        self.resume_button.setProperty("actionRole", "success")
+        self.view_records_button = QPushButton("查看扫码记录")
+        self.view_records_button.setProperty("actionRole", "primary")
+        self.export_button = QPushButton("导出 CSV")
+        self.interruption_reason_input = QLineEdit("人工中断")
+        self.interrupt_button = QPushButton("中断运行")
+        self.interrupt_button.setProperty("actionRole", "danger")
+        self.refresh_button = QPushButton("刷新")
+
         splitter = QSplitter()
         self.run_table = QTableWidget(0, 6)
         self.run_table.setHorizontalHeaderLabels(
@@ -119,8 +132,28 @@ class ProductionRunManagementWidget(QWidget):
         )
         self.run_table.horizontalHeader().setStretchLastSection(True)
         splitter.addWidget(self.run_table)
-        right = QWidget()
+        right = QFrame()
+        right.setObjectName("runSummaryCard")
         right_layout = QVBoxLayout(right)
+        self.run_summary_title = QLabel("请选择生产运行")
+        self.run_summary_title.setObjectName("productSummary")
+        right_layout.addWidget(self.run_summary_title)
+        chips = QHBoxLayout()
+        self.run_status_chip = QLabel("状态 -")
+        self.run_progress_chip = QLabel("0 / 0")
+        self.run_ng_chip = QLabel("NG 0")
+        for chip in (
+            self.run_status_chip,
+            self.run_progress_chip,
+            self.run_ng_chip,
+        ):
+            chip.setProperty("summaryChip", True)
+            chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            chips.addWidget(chip)
+        self.run_status_chip.setStyleSheet("background: #f2f4f7; color: #475467;")
+        self.run_progress_chip.setStyleSheet("background: #eff8ff; color: #175cd3;")
+        self.run_ng_chip.setStyleSheet("background: #fef3f2; color: #d92d20;")
+        right_layout.addLayout(chips)
         self.snapshot_label = QLabel("请选择生产运行")
         self.snapshot_label.setWordWrap(True)
         right_layout.addWidget(self.snapshot_label)
@@ -152,27 +185,22 @@ class ProductionRunManagementWidget(QWidget):
         attempts_layout.addWidget(self.attempt_table, 1)
         self.detail_tabs.addTab(attempts_page, "扫码记录")
         right_layout.addWidget(self.detail_tabs, 1)
+        reason_row = QHBoxLayout()
+        reason_row.addWidget(QLabel("中断原因"))
+        reason_row.addWidget(self.interruption_reason_input, 1)
+        right_layout.addLayout(reason_row)
+        detail_actions = QHBoxLayout()
+        detail_actions.addWidget(self.view_records_button)
+        detail_actions.addWidget(self.export_button)
+        detail_actions.addWidget(self.interrupt_button)
+        right_layout.addLayout(detail_actions)
         splitter.addWidget(right)
         splitter.setSizes((750, 450))
         layout.addWidget(splitter, 1)
 
         actions = QHBoxLayout()
-        self.start_button = QPushButton("转到扫码开始")
-        self.start_button.setProperty("actionRole", "primary")
-        self.resume_button = QPushButton("恢复所选运行")
-        self.resume_button.setProperty("actionRole", "success")
-        self.view_records_button = QPushButton("查看扫码记录")
-        self.export_button = QPushButton("导出 CSV")
-        self.interruption_reason_input = QLineEdit("人工中断")
-        self.interrupt_button = QPushButton("中断所选运行")
-        self.interrupt_button.setProperty("actionRole", "danger")
-        self.refresh_button = QPushButton("刷新")
         actions.addWidget(self.start_button)
         actions.addWidget(self.resume_button)
-        actions.addWidget(self.view_records_button)
-        actions.addWidget(self.export_button)
-        actions.addWidget(self.interruption_reason_input)
-        actions.addWidget(self.interrupt_button)
         actions.addWidget(self.refresh_button)
         actions.addStretch(1)
         layout.addLayout(actions)
@@ -222,6 +250,10 @@ class ProductionRunManagementWidget(QWidget):
                 f"找到 {len(self._runs)} 个运行 · 更新于 {self._clock():%H:%M}"
             )
         else:
+            self.run_summary_title.setText("没有匹配的生产运行")
+            self.run_status_chip.setText("状态 -")
+            self.run_progress_chip.setText("0 / 0")
+            self.run_ng_chip.setText("NG 0")
             self.snapshot_label.setText("没有匹配的生产运行")
             self.station_table.setRowCount(0)
             self.attempt_table.setRowCount(0)
@@ -239,6 +271,17 @@ class ProductionRunManagementWidget(QWidget):
         run = self._selected()
         if run is None:
             return
+        self.run_summary_title.setText(run.run_id)
+        status_text, status_style = {
+            RunStatus.RUNNING: ("运行中", "background: #ecfdf3; color: #067647;"),
+            RunStatus.COMPLETED: ("已完成", "background: #eff8ff; color: #175cd3;"),
+            RunStatus.INTERRUPTED: ("已中断", "background: #fef3f2; color: #d92d20;"),
+        }[run.status]
+        self.run_status_chip.setText(status_text)
+        self.run_status_chip.setStyleSheet(status_style)
+        self.run_progress_chip.setText(
+            f"{run.completed_stations} / {run.total_stations}"
+        )
         self.snapshot_label.setText(
             f"配置快照：{run.configuration.product_code}/{run.configuration.version}\n"
             f"BOM 版本 ID：{run.configuration.bom_version_id or '-'}\n"
@@ -282,6 +325,7 @@ class ProductionRunManagementWidget(QWidget):
         self.attempt_summary_label.setText(
             f"扫码记录：{len(attempts)} 条 · NG {ng_count} · 重复 {repeated_count}"
         )
+        self.run_ng_chip.setText(f"NG {ng_count}")
         self.resume_button.setEnabled(run.status is RunStatus.INTERRUPTED)
         self.interrupt_button.setEnabled(run.status is RunStatus.RUNNING)
         self.view_records_button.setEnabled(True)

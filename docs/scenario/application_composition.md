@@ -6,8 +6,8 @@
 
 ## Test Steps
 
-- Case 1 (navigation): Compose the eight workflow screens under stable Chinese labels grouped as
-  work, configuration, and system pages, with scanning first.
+- Case 1 (navigation): Compose the eight workflow screens under a persistent left navigation,
+  grouped as work, configuration, and system pages, with scanning selected first.
 - Case 2 (operator): Collapse a confirmed operator to a read-only identity and switch action.
 - Case 3 (persistence): Store master data, close, reopen, and read it from the same database file.
 - Case 4 (page wiring): Refresh the scan configuration list after import completion.
@@ -15,6 +15,8 @@
 - Case 6 (empty-state navigation): Open the guided import page directly from scanning, BOM, or
   product-configuration empty states.
 - Case 7 (lifecycle): Allow repeated close calls and reject database use after closure.
+- Case 8 (diagnostics): Keep a low-profile footer visible with database, scanner-focus, voice,
+  current-configuration, and refresh-time status.
 
 ## Status
 

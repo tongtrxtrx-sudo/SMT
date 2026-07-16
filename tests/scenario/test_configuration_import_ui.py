@@ -122,6 +122,17 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
             announcer.prompts,
         )
 
+    def test_exposes_drag_drop_zones_with_selected_file_feedback(self) -> None:
+        widget = self.make_widget(FakeImportWorkflow(result=sample_result()))
+
+        self.assertTrue(widget.bom_drop_zone.acceptDrops())
+        self.assertTrue(widget.station_drop_zone.acceptDrops())
+        widget.bom_path_input.setText("C:/imports/bom.xlsx")
+        widget.station_path_input.setText("C:/imports/stations.xlsx")
+
+        self.assertEqual("bom.xlsx", widget.bom_drop_zone.path_label.text())
+        self.assertEqual("stations.xlsx", widget.station_drop_zone.path_label.text())
+
     def test_displays_workflow_error_without_modal_dialog(self) -> None:
         workflow = FakeImportWorkflow(error=ImportValidationError("Row 7: unknown material"))
         announcer = FakeAnnouncementSink()

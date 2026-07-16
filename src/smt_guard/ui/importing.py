@@ -3,11 +3,13 @@
 from pathlib import Path
 from typing import Protocol
 
-from PySide6.QtCore import Signal, Slot
+from PySide6.QtCore import Qt, QUrl, Signal, Slot
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -23,6 +25,58 @@ from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePr
 from smt_guard.importing import ImportResult
 from smt_guard.ui.errors import operator_error_message
 from smt_guard.ui.tables import readable_item, set_column_widths
+
+
+class WorkbookDropZone(QFrame):
+    """Accept one local workbook while retaining an explicit browse fallback."""
+
+    path_dropped = Signal(str)
+
+    def __init__(
+        self,
+        prompt: str,
+        browse_button: QPushButton,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("dropZone")
+        self.setAcceptDrops(True)
+        self.setMinimumHeight(105)
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.prompt_label = QLabel(prompt)
+        self.prompt_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.path_label = QLabel("尚未选择文件")
+        self.path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.path_label.setStyleSheet("color: #667085;")
+        browse_button.setProperty("actionRole", "primary")
+        layout.addWidget(self.prompt_label)
+        layout.addWidget(browse_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.path_label)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self._workbook_path(event.mimeData().urls()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        path = self._workbook_path(event.mimeData().urls())
+        if path:
+            self.path_dropped.emit(path)
+            event.acceptProposedAction()
+
+    @Slot(str)
+    def show_path(self, path: str) -> None:
+        self.path_label.setText(Path(path).name if path else "尚未选择文件")
+
+    @staticmethod
+    def _workbook_path(urls: list[QUrl]) -> str:
+        for url in urls:
+            if not url.isLocalFile():
+                continue
+            path = url.toLocalFile()
+            if Path(path).suffix.casefold() in {".xlsx", ".xlsm"}:
+                return path
+        return ""
 
 
 class ConfigurationImportWorkflow(Protocol):
@@ -79,21 +133,24 @@ class ConfigurationImportWidget(QWidget):
         bom_layout.addWidget(QLabel("选择 BOM 工作簿。导入成功后会自动进入站位表步骤。"))
         form = QFormLayout()
         self.bom_path_input = QLineEdit()
+        self.bom_path_input.setReadOnly(True)
         self.bom_browse_button = QPushButton("选择文件")
+        self.bom_drop_zone = WorkbookDropZone(
+            "拖放 BOM 文件到这里",
+            self.bom_browse_button,
+        )
+        bom_layout.addWidget(self.bom_drop_zone)
         self.bom_import_button = QPushButton("导入 BOM 并继续")
         self.bom_import_button.setProperty("actionRole", "primary")
-        form.addRow(
-            "BOM 文件",
-            self._path_row(
-                self.bom_path_input,
-                self.bom_browse_button,
-                self.bom_import_button,
-            ),
-        )
+        form.addRow("已选文件", self.bom_path_input)
         self.bom_version_input = QLineEdit()
         self.bom_version_input.setPlaceholderText("可选；同一 BOM 修改后请填写新版本")
         form.addRow("BOM 新版本", self.bom_version_input)
         bom_layout.addLayout(form)
+        bom_actions = QHBoxLayout()
+        bom_actions.addStretch(1)
+        bom_actions.addWidget(self.bom_import_button)
+        bom_layout.addLayout(bom_actions)
         layout.addWidget(self.bom_step)
 
         self.station_step = QGroupBox("第二步：导入站位表")
@@ -103,14 +160,14 @@ class ConfigurationImportWidget(QWidget):
         station_layout.addWidget(self.bom_summary_label)
         station_form = QFormLayout()
         self.station_path_input = QLineEdit()
+        self.station_path_input.setReadOnly(True)
         self.station_browse_button = QPushButton("选择文件")
-        station_form.addRow(
-            "站位表文件",
-            self._path_row(
-                self.station_path_input,
-                self.station_browse_button,
-            ),
+        self.station_drop_zone = WorkbookDropZone(
+            "拖放站位表文件到这里",
+            self.station_browse_button,
         )
+        station_layout.addWidget(self.station_drop_zone)
+        station_form.addRow("已选文件", self.station_path_input)
 
         self.station_sheet_input = QLineEdit("Worksheet")
         self.version_input = QLineEdit()
@@ -174,6 +231,10 @@ class ConfigurationImportWidget(QWidget):
         self.review_button.clicked.connect(self._review_station_table)
         self.back_to_bom_button.clicked.connect(lambda: self._set_step(1))
         self.back_to_station_button.clicked.connect(lambda: self._set_step(2))
+        self.bom_drop_zone.path_dropped.connect(self.bom_path_input.setText)
+        self.station_drop_zone.path_dropped.connect(self.station_path_input.setText)
+        self.bom_path_input.textChanged.connect(self.bom_drop_zone.show_path)
+        self.station_path_input.textChanged.connect(self.station_drop_zone.show_path)
 
     @Slot()
     def _select_bom(self) -> None:

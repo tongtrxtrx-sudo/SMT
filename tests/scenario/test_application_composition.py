@@ -111,25 +111,25 @@ class ApplicationCompositionTests(unittest.TestCase):
         QTest.keyClick(self.runtime.scan_widget.scan_input, Qt.Key.Key_Return)
         self.app.processEvents()
 
-    def test_composes_all_product_navigation_tabs(self) -> None:
-        labels = [
-            self.runtime.window.tab_widget.tabText(index)
-            for index in range(self.runtime.window.tab_widget.count())
-        ]
+    def test_composes_grouped_side_navigation(self) -> None:
+        labels = [button.text() for button in self.runtime.window.navigation_buttons]
 
         self.assertEqual(
             [
-                "作业 · 扫码",
-                "作业 · 生产运行",
-                "作业 · 记录查询",
-                "配置 · 设备与站位",
-                "配置 · 导入配置",
-                "配置 · BOM",
-                "配置 · 产品配置",
-                "系统 · 审计日志",
+                "扫码作业",
+                "生产运行",
+                "记录查询",
+                "设备与站位",
+                "导入配置",
+                "BOM 管理",
+                "产品配置",
+                "审计日志",
             ],
             labels,
         )
+        self.assertTrue(self.runtime.window.navigation_buttons[0].isChecked())
+        self.assertEqual(180, self.runtime.window.side_navigation.width())
+        self.assertIn("数据库正常", self.runtime.window.diagnostic_label.text())
         self.assertEqual("SMT 扫码防错", self.runtime.window.windowTitle())
 
     def test_empty_scan_state_opens_guided_import_page(self) -> None:

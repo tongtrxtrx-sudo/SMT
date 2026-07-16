@@ -3,9 +3,20 @@
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Slot
+from PySide6.QtCore import QDateTime, QTimer, Slot
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
-from PySide6.QtWidgets import QMainWindow, QTableWidget, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QStackedWidget,
+    QTableWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from smt_guard.ui.operator import OperatorSessionWidget
 from smt_guard.ui.scanning import ScanWidget
@@ -17,7 +28,7 @@ QWidget {
     color: #1d2939;
     background-color: #f8fafc;
 }
-QMainWindow, QTabWidget, QTabWidget::pane, QTabBar {
+QMainWindow, QStackedWidget, QTabWidget, QTabWidget::pane, QTabBar {
     background-color: #f8fafc;
 }
 QTabBar::tab {
@@ -112,6 +123,70 @@ QPushButton:disabled {
     color: #667085;
     border-color: #d0d5dd;
 }
+QFrame#sideNavigation {
+    background-color: #f2f4f7;
+    border-right: 1px solid #d0d5dd;
+}
+QLabel#navBrand {
+    font-size: 20px;
+    font-weight: 700;
+    padding: 4px 8px 12px 8px;
+}
+QLabel#navSection {
+    color: #475467;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 12px 10px 4px 10px;
+}
+QPushButton[navItem="true"] {
+    background-color: transparent;
+    color: #344054;
+    border: 0;
+    border-radius: 6px;
+    padding: 10px 14px;
+    text-align: left;
+}
+QPushButton[navItem="true"]:hover {
+    background-color: #e4e7ec;
+}
+QPushButton[navItem="true"]:checked {
+    background-color: #d1e9ff;
+    color: #175cd3;
+    font-weight: 700;
+}
+QFrame#diagnosticBar {
+    background-color: #ecfdf3;
+    border: 1px solid #abefc6;
+    border-radius: 6px;
+}
+QLabel#diagnosticText {
+    color: #067647;
+    padding: 6px 10px;
+}
+QFrame#selectionCard, QFrame#scanHero, QFrame#scanInputCard,
+QFrame#historyCard, QFrame#runSummaryCard, QFrame#dropZone {
+    background-color: #ffffff;
+    border: 1px solid #d0d5dd;
+    border-radius: 10px;
+}
+QFrame#dropZone {
+    border: 2px dashed #b2ccff;
+    background-color: #f8faff;
+}
+QLabel#productSummary {
+    font-size: 25px;
+    font-weight: 700;
+}
+QLabel#progressCount {
+    font-size: 26px;
+    font-weight: 700;
+}
+QLabel[summaryChip="true"] {
+    border-radius: 7px;
+    padding: 12px 16px;
+    font-size: 17px;
+    font-weight: 600;
+}
 QLabel#pageTitle {
     font-size: 22px;
     font-weight: 700;
@@ -172,6 +247,17 @@ class MainWindow(QMainWindow):
     RECORDS_TAB = 2
     IMPORT_TAB = 4
 
+    PAGE_NAMES = (
+        "扫码作业",
+        "生产运行",
+        "记录查询",
+        "设备与站位",
+        "导入配置",
+        "BOM 管理",
+        "产品配置",
+        "审计日志",
+    )
+
     def __init__(
         self,
         scan_widget: ScanWidget,
@@ -199,29 +285,89 @@ class MainWindow(QMainWindow):
         central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.addWidget(operator_widget)
-        self.tab_widget = QTabWidget()
-        pages = (
-            (scan_widget, "作业 · 扫码", "现场主作业"),
-            (run_widget, "作业 · 生产运行", "运行进度与扫码记录"),
-            (records_widget, "作业 · 记录查询", "高级记录查询"),
-            (master_data_widget, "配置 · 设备与站位", "基础配置"),
-            (import_widget, "配置 · 导入配置", "按步骤导入"),
-            (bom_widget, "配置 · BOM", "BOM 生命周期"),
-            (configuration_widget, "配置 · 产品配置", "产品配置管理"),
-            (audit_widget, "系统 · 审计日志", "系统追溯"),
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        self.side_navigation = QFrame()
+        self.side_navigation.setObjectName("sideNavigation")
+        self.side_navigation.setFixedWidth(180)
+        navigation_layout = QVBoxLayout(self.side_navigation)
+        navigation_layout.setContentsMargins(12, 12, 12, 12)
+        navigation_layout.setSpacing(3)
+        brand = QLabel("SMT Guard")
+        brand.setObjectName("navBrand")
+        navigation_layout.addWidget(brand)
+
+        self.navigation_group = QButtonGroup(self)
+        self.navigation_group.setExclusive(True)
+        self.navigation_buttons: list[QPushButton] = []
+        section_starts = {0: "作业", 3: "配置", 7: "系统"}
+        tooltips = (
+            "现场主作业",
+            "运行进度与扫码记录",
+            "高级记录查询",
+            "基础配置",
+            "按步骤导入",
+            "BOM 生命周期",
+            "产品配置管理",
+            "系统追溯",
         )
-        for page, label, tooltip in pages:
-            index = self.tab_widget.addTab(page, label)
-            self.tab_widget.setTabToolTip(index, tooltip)
-        tab_bar = self.tab_widget.tabBar()
-        for index in range(0, 3):
-            tab_bar.setTabTextColor(index, QColor("#175cd3"))
-        for index in range(3, 7):
-            tab_bar.setTabTextColor(index, QColor("#6941c6"))
-        tab_bar.setTabTextColor(7, QColor("#475467"))
-        self.tab_widget.currentChanged.connect(self._tab_changed)
-        central_layout.addWidget(self.tab_widget, 1)
+        for index, name in enumerate(self.PAGE_NAMES):
+            if index in section_starts:
+                section = QLabel(section_starts[index])
+                section.setObjectName("navSection")
+                navigation_layout.addWidget(section)
+            button = QPushButton(name)
+            button.setCheckable(True)
+            button.setProperty("navItem", True)
+            button.setToolTip(tooltips[index])
+            self.navigation_group.addButton(button, index)
+            self.navigation_buttons.append(button)
+            navigation_layout.addWidget(button)
+        navigation_layout.addStretch(1)
+        body.addWidget(self.side_navigation)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(14, 10, 14, 10)
+        content_layout.setSpacing(8)
+        self.page_stack = QStackedWidget()
+        # Keep the historical attribute as a compatibility alias for workflow wiring.
+        self.tab_widget = self.page_stack
+        pages = (
+            scan_widget,
+            run_widget,
+            records_widget,
+            master_data_widget,
+            import_widget,
+            bom_widget,
+            configuration_widget,
+            audit_widget,
+        )
+        for page in pages:
+            self.page_stack.addWidget(page)
+        self.navigation_group.idClicked.connect(self.page_stack.setCurrentIndex)
+        self.page_stack.currentChanged.connect(self._tab_changed)
+        self.navigation_buttons[0].setChecked(True)
+        content_layout.addWidget(self.page_stack, 1)
+
+        self.diagnostic_frame = QFrame()
+        self.diagnostic_frame.setObjectName("diagnosticBar")
+        diagnostic_layout = QHBoxLayout(self.diagnostic_frame)
+        diagnostic_layout.setContentsMargins(0, 0, 0, 0)
+        self.diagnostic_label = QLabel()
+        self.diagnostic_label.setObjectName("diagnosticText")
+        diagnostic_layout.addWidget(self.diagnostic_label)
+        content_layout.addWidget(self.diagnostic_frame)
+        body.addWidget(content, 1)
+        central_layout.addLayout(body, 1)
         self.setCentralWidget(central)
+        scan_widget.configuration_combo.currentTextChanged.connect(
+            self._update_diagnostics
+        )
+        scan_widget.run_changed.connect(self._update_diagnostics)
+        self._update_diagnostics()
         self._prepare_table_viewports()
         QTimer.singleShot(0, self._prepare_table_viewports)
 
@@ -242,6 +388,24 @@ class MainWindow(QMainWindow):
 
     @Slot(int)
     def _tab_changed(self, index: int) -> None:
+        if 0 <= index < len(self.navigation_buttons):
+            self.navigation_buttons[index].setChecked(True)
         QTimer.singleShot(0, self._prepare_table_viewports)
         if index == self.SCAN_TAB:
             QTimer.singleShot(0, self._scan_widget.focus_scanner)
+
+    @Slot()
+    def _update_diagnostics(self) -> None:
+        voice_mode = (
+            "SAPI"
+            if os.environ.get("SMT_GUARD_VOICE_ENABLED", "1").strip().casefold()
+            not in {"0", "false", "no", "off"}
+            else "静默"
+        )
+        configuration = self._scan_widget.configuration_combo.currentText() or "未选择"
+        updated_at = QDateTime.currentDateTime().toString("HH:mm")
+        self.diagnostic_label.setText(
+            f"● 数据库正常  ·  扫码输入：按当前页面自动聚焦  ·  "
+            f"中文语音：{voice_mode}  ·  当前配置：{configuration}  ·  "
+            f"更新于 {updated_at}"
+        )

@@ -77,6 +77,9 @@ class ScanWidgetTests(unittest.TestCase):
     def test_loads_configuration_and_starts_run(self) -> None:
         widget = self.make_widget([self.configuration])
 
+        self.assertIn("501000087 / V1", widget.product_summary_label.text())
+        self.assertFalse(widget.selection_card.isHidden())
+
         widget.start_button.click()
 
         self.assertEqual(1, widget.configuration_combo.count())
@@ -85,6 +88,8 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertIn("设备", widget.feedback_label.text())
         self.assertIn("#eff8ff", widget.feedback_label.styleSheet())
         self.assertFalse(widget.attempt_table.isVisible())
+        self.assertTrue(widget.selection_card.isHidden())
+        self.assertEqual("0 / 1", widget.progress_count_label.text())
         self.assertEqual([VoicePrompt.SCAN_DEVICE], self.announcements.prompts)
 
     def test_empty_configuration_guides_operator_to_import(self) -> None:
@@ -135,6 +140,8 @@ class ScanWidgetTests(unittest.TestCase):
 
         self.assertEqual("ok", widget.feedback_label.property("feedbackState"))
         self.assertEqual(1, widget.progress_bar.value())
+        self.assertEqual("1 / 1", widget.progress_count_label.text())
+        self.assertFalse(widget.selection_card.isHidden())
         self.assertEqual(1, widget.attempt_table.rowCount())
         self.assertEqual([FeedbackTone.OK], self.audio.tones)
         self.assertEqual(
