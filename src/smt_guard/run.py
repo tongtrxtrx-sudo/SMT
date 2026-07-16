@@ -8,7 +8,7 @@ from typing import Protocol
 
 from smt_guard.feedback import AudioSink, FeedbackController, FeedbackState
 from smt_guard.records import Attempt
-from smt_guard.scan import ProductConfiguration, ScanOutcome, ScanSession
+from smt_guard.scan import ProductConfiguration, ScanOutcome, ScanSession, ScanStep
 from smt_guard.verification import VerificationResult
 
 
@@ -164,6 +164,11 @@ class VerificationRun:
     def initial_feedback(self) -> FeedbackState:
         """Return the first operator prompt for a new run."""
         return self._feedback.waiting(self._session.current_step)
+
+    @property
+    def current_step(self) -> ScanStep:
+        """Expose the current safe scanner step to presentation adapters."""
+        return self._session.current_step
 
     @property
     def completed(self) -> bool:

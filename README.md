@@ -9,7 +9,7 @@ configuration.
 - Configure devices and physical stations.
 - Record the current operator once per application session and attribute all subsequent changes,
   imports, production runs, and audits to that operator.
-- Import an `.xlsx` BOM and a product station table in separate actions.
+- Follow a guided BOM -> station table -> validation and activation import flow.
 - Scan device, station, and material codes in a controlled sequence.
 - Compare material codes exactly while preserving leading zeroes.
 - Show clear OK or NG feedback and production progress.
@@ -64,10 +64,10 @@ Only active configurations whose current devices and stations remain enabled are
 scan page. Production-run headers and configuration snapshots are written before the first scan,
 so zero-scan and interrupted runs remain queryable and recoverable through the repository layer.
 
-The desktop UI now exposes eight focused pages: scanning, device/station master data, import,
-BOM management, product-configuration management, production-run management, record query/export,
-and audit query. A shared operator bar sits above all pages. Write actions are rejected until a
-non-empty operator identifier is confirmed.
+The desktop UI exposes eight focused pages grouped as work, configuration, and system tasks, with
+scanning as the first page. After confirmation, the shared operator editor collapses to the current
+identity and a deliberate switch action. Write actions are rejected until a non-empty operator
+identifier is confirmed.
 
 ## Product lifecycle workflow
 
@@ -76,28 +76,34 @@ non-empty operator identifier is confirmed.
    referenced data. Archived state is displayed separately from ordinary disabled state.
 3. Import a BOM. For a changed BOM whose previous version already exists, fill **BOM 新版本** so
    the change is stored as another draft instead of modifying released details in place.
-4. Use **BOM 管理** to inspect materials and provenance (source filename, SHA-256, import time, and
-   operator), compare two versions, then publish, activate, obsolete, or archive them.
+4. Use **配置 · BOM** to compare compact version summaries, then inspect materials and provenance
+   (source filename, SHA-256, import time, and operator) in the detail pane before enabling or
+   disabling a version.
 5. Use **产品配置** to copy a released configuration into a new draft, add/remove/edit station
    assignments, validate it, and publish/activate/disable/archive it. Released assignment details
    are immutable. The scan page lists only active, non-empty configurations whose referenced
    devices and stations are still enabled.
-6. Start work on **扫码**. A run header and configuration snapshot are persisted before the first
-   scan. Starting another run, changing operator, or closing the application interrupts an
-   unfinished run. **生产运行** can filter runs, show every station snapshot state, and return an
-   interrupted run to the scan page for recovery. A run completes automatically after the final
+6. Start work on **作业 · 扫码**. A run header and configuration snapshot are persisted before the
+   first scan. The page keeps one large current-step prompt visible, accepts scanner Enter directly,
+   reports scanner focus, and keeps recent history collapsed. Starting another run, changing
+   operator, or closing the application interrupts an unfinished run. **作业 · 生产运行** can filter
+   runs in a compact six-column list, show full time/interruption details beside it, display the last
+   query time, inspect station progress and scan records, export the selected run as CSV, and return
+   an interrupted run to scanning for recovery. A run completes automatically after the final
    required station receives an OK verification.
-7. Use **审计日志** to filter immutable history by entity type/key, operator, action, and ISO time
-   range. Scan attempts and audit entries cannot be edited or deleted.
+7. Use **系统 · 审计日志** to filter immutable history by entity type/key, operator, action, and a
+   calendar date-time range. **今天**, **近 7 天**, and **近 30 天** apply common ranges directly.
+   Scan attempts and audit entries cannot be edited or deleted.
 
 ## Import workflow
 
 1. Create and enable the required devices and stations on the master-data page.
-2. On the import page, select a BOM and choose **Import BOM**. The product and material count are
-   available immediately; no station-table selection is required.
-3. Select a station table, enter its worksheet name and product version, then choose
-   **Import station table**. The station assignments are validated against the BOM currently loaded
-   in the application session.
+2. On **配置 · 导入配置**, complete step 1 by selecting and importing a BOM. The page shows the
+   product, BOM version, and material count, then advances to step 2 automatically.
+3. Select the station table, enter its worksheet name and product version, and review the parsed
+   station count.
+4. In step 3, verify the combined summary and choose **校验并启用**. Validation errors remain on the
+   page so they can be corrected without losing the current workflow context.
 
 After restarting the application, import the BOM again before importing another station table.
 The supplied template is `templates\站位表导入模板.xlsx`. Its `Worksheet` sheet uses the required

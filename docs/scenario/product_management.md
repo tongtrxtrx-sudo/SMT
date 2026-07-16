@@ -30,6 +30,13 @@
 **When** they are compared  
 **Then** added, removed, and changed material codes are displayed with immutable source provenance.
 
+**Given** the application is displayed at the standard 1180-pixel working width
+
+**When** BOM versions, BOM materials, production runs, or the default station progress are shown
+
+**Then** the primary tables fit without horizontal scrolling, while source provenance, detailed
+times, and interruption reasons remain available in the adjacent detail pane.
+
 **Given** a BOM or configuration has been published  
 **When** another change is required  
 **Then** the operator imports an explicit new BOM version or copies the configuration into a new
@@ -51,6 +58,22 @@ data remains enabled.
 **Then** completed station progress and previous attempts are restored on the scan page, and later
 run actions use the resuming operator.
 
-**Given** append-only scan attempts and audit entries  
-**When** audit history is filtered by entity, operator, action, or ISO time range  
+**Given** append-only scan attempts and audit entries
+
+**When** production runs or audit history are filtered with calendar date-time controls or the
+today, recent-7-day, and recent-30-day shortcuts
+
 **Then** matching entries are shown newest first and no edit or delete action is available.
+
+**Given** a production-run or audit query completes
+
+**When** the result count is displayed
+
+**Then** the page also shows the latest refresh time so users do not need to query repeatedly.
+
+**Given** no BOM or product configuration matches the current page
+
+**When** the user chooses the empty-state import action
+
+**Then** the application opens the guided configuration-import page without requiring navigation
+knowledge.

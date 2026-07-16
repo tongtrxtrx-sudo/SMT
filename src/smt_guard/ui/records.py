@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.records import Attempt
+from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import readable_item, set_column_widths
 
 
@@ -77,6 +78,7 @@ class RecordQueryWidget(QWidget):
         self.run_id_input = QLineEdit()
         self.run_id_input.setPlaceholderText("输入运行编号")
         self.query_button = QPushButton("查询")
+        self.query_button.setProperty("actionRole", "primary")
         query_row.addWidget(self.run_id_input, 1)
         query_row.addWidget(self.query_button)
         layout.addLayout(query_row)
@@ -154,7 +156,7 @@ class RecordQueryWidget(QWidget):
         for row, attempt in enumerate(records):
             values = (
                 str(attempt.id or ""),
-                attempt.timestamp.isoformat(),
+                display_datetime(attempt.timestamp),
                 attempt.run_id,
                 attempt.product_code,
                 attempt.product_version,

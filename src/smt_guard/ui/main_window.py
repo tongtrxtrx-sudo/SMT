@@ -41,7 +41,7 @@ QGroupBox::title {
     left: 10px;
     padding: 0 5px;
 }
-QLineEdit, QSpinBox, QComboBox, QTableWidget {
+QLineEdit, QSpinBox, QComboBox, QDateTimeEdit, QTableWidget {
     background-color: #ffffff;
     color: #1d2939;
     border: 1px solid #98a2b3;
@@ -74,30 +74,55 @@ QHeaderView::section, QTableCornerButton::section {
     font-weight: 600;
 }
 QPushButton {
-    background-color: #175cd3;
-    color: #ffffff;
-    border: none;
+    background-color: #ffffff;
+    color: #344054;
+    border: 1px solid #98a2b3;
     border-radius: 4px;
     padding: 7px 14px;
 }
 QPushButton:hover {
+    background-color: #f2f4f7;
+}
+QPushButton[actionRole="primary"] {
+    background-color: #175cd3;
+    color: #ffffff;
+    border-color: #175cd3;
+}
+QPushButton[actionRole="primary"]:hover {
     background-color: #1849a9;
+}
+QPushButton[actionRole="success"] {
+    background-color: #12b76a;
+    color: #ffffff;
+    border-color: #12b76a;
+}
+QPushButton[actionRole="success"]:hover {
+    background-color: #039855;
+}
+QPushButton[actionRole="danger"] {
+    background-color: #ffffff;
+    color: #d92d20;
+    border: 2px solid #f04438;
+}
+QPushButton[actionRole="danger"]:hover {
+    background-color: #fef3f2;
 }
 QPushButton:disabled {
     background-color: #d0d5dd;
     color: #667085;
+    border-color: #d0d5dd;
 }
 QLabel#pageTitle {
     font-size: 22px;
     font-weight: 700;
 }
 QLabel#scanFeedback {
-    font-size: 28px;
+    font-size: 36px;
     font-weight: 700;
-    padding: 10px;
+    padding: 24px;
     background-color: #ffffff;
-    border: 1px solid #d0d5dd;
-    border-radius: 6px;
+    border: 3px solid #84caff;
+    border-radius: 12px;
 }
 QProgressBar {
     border: 1px solid #98a2b3;
@@ -142,6 +167,11 @@ def light_palette(base: QPalette) -> QPalette:
 class MainWindow(QMainWindow):
     """Host operator identity and all primary application workflows."""
 
+    SCAN_TAB = 0
+    RUNS_TAB = 1
+    RECORDS_TAB = 2
+    IMPORT_TAB = 4
+
     def __init__(
         self,
         scan_widget: ScanWidget,
@@ -170,14 +200,25 @@ class MainWindow(QMainWindow):
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.addWidget(operator_widget)
         self.tab_widget = QTabWidget()
-        self.tab_widget.addTab(scan_widget, "扫码")
-        self.tab_widget.addTab(master_data_widget, "设备与站位")
-        self.tab_widget.addTab(import_widget, "导入配置")
-        self.tab_widget.addTab(bom_widget, "BOM 管理")
-        self.tab_widget.addTab(configuration_widget, "产品配置")
-        self.tab_widget.addTab(run_widget, "生产运行")
-        self.tab_widget.addTab(records_widget, "记录查询")
-        self.tab_widget.addTab(audit_widget, "审计日志")
+        pages = (
+            (scan_widget, "作业 · 扫码", "现场主作业"),
+            (run_widget, "作业 · 生产运行", "运行进度与扫码记录"),
+            (records_widget, "作业 · 记录查询", "高级记录查询"),
+            (master_data_widget, "配置 · 设备与站位", "基础配置"),
+            (import_widget, "配置 · 导入配置", "按步骤导入"),
+            (bom_widget, "配置 · BOM", "BOM 生命周期"),
+            (configuration_widget, "配置 · 产品配置", "产品配置管理"),
+            (audit_widget, "系统 · 审计日志", "系统追溯"),
+        )
+        for page, label, tooltip in pages:
+            index = self.tab_widget.addTab(page, label)
+            self.tab_widget.setTabToolTip(index, tooltip)
+        tab_bar = self.tab_widget.tabBar()
+        for index in range(0, 3):
+            tab_bar.setTabTextColor(index, QColor("#175cd3"))
+        for index in range(3, 7):
+            tab_bar.setTabTextColor(index, QColor("#6941c6"))
+        tab_bar.setTabTextColor(7, QColor("#475467"))
         self.tab_widget.currentChanged.connect(self._tab_changed)
         central_layout.addWidget(self.tab_widget, 1)
         self.setCentralWidget(central)
@@ -202,5 +243,5 @@ class MainWindow(QMainWindow):
     @Slot(int)
     def _tab_changed(self, index: int) -> None:
         QTimer.singleShot(0, self._prepare_table_viewports)
-        if index == 0:
+        if index == self.SCAN_TAB:
             QTimer.singleShot(0, self._scan_widget.focus_scanner)

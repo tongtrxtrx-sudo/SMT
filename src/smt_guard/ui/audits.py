@@ -1,6 +1,7 @@
 """Read-only audit log query page."""
 
-from datetime import datetime
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Protocol
 
 from PySide6.QtCore import Slot
@@ -17,6 +18,8 @@ from PySide6.QtWidgets import (
 )
 
 from smt_guard.audit import AuditEntry
+from smt_guard.ui.date_range import DateRangeFilter
+from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import readable_item, set_column_widths
 
 
@@ -39,9 +42,16 @@ class AuditLogWidget(QWidget):
 
     HEADERS = ("编号", "时间", "实体", "实体键", "动作", "操作员", "变更前", "变更后")
 
-    def __init__(self, repository: AuditReader, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        repository: AuditReader,
+        parent: QWidget | None = None,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         super().__init__(parent)
         self._repository = repository
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -58,22 +68,21 @@ class AuditLogWidget(QWidget):
         self.actor_input.setPlaceholderText("操作员（包含）")
         self.action_input = QLineEdit()
         self.action_input.setPlaceholderText("动作")
-        self.started_from_input = QLineEdit()
-        self.started_from_input.setPlaceholderText("时间自（ISO）")
-        self.started_to_input = QLineEdit()
-        self.started_to_input.setPlaceholderText("时间至（ISO）")
         self.query_button = QPushButton("查询")
+        self.query_button.setProperty("actionRole", "primary")
         for widget in (
             self.entity_type_input,
             self.entity_key_input,
             self.actor_input,
             self.action_input,
-            self.started_from_input,
-            self.started_to_input,
             self.query_button,
         ):
             filters.addWidget(widget)
         layout.addLayout(filters)
+        self.date_range = DateRangeFilter(clock=self._clock, default_days=7)
+        self.started_from_input = self.date_range.started_from_input
+        self.started_to_input = self.date_range.started_to_input
+        layout.addWidget(self.date_range)
         self.audit_table = QTableWidget(0, len(self.HEADERS))
         self.audit_table.setHorizontalHeaderLabels(self.HEADERS)
         self.audit_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -85,27 +94,24 @@ class AuditLogWidget(QWidget):
         layout.addWidget(self.status_label)
         self.query_button.clicked.connect(self.refresh)
         self.entity_key_input.returnPressed.connect(self.refresh)
+        self.date_range.range_selected.connect(self.refresh)
 
     @Slot()
     def refresh(self) -> None:
-        try:
-            entries = self._repository.search(
-                entity_type=self.entity_type_input.text(),
-                entity_key=self.entity_key_input.text(),
-                actor=self.actor_input.text(),
-                action=self.action_input.text(),
-                started_from=self._parse_time(self.started_from_input.text()),
-                started_to=self._parse_time(self.started_to_input.text()),
-            )
-        except ValueError as error:
-            self.status_label.setStyleSheet("color: #b42318;")
-            self.status_label.setText(str(error))
-            return
+        started_from, started_to = self.date_range.values()
+        entries = self._repository.search(
+            entity_type=self.entity_type_input.text(),
+            entity_key=self.entity_key_input.text(),
+            actor=self.actor_input.text(),
+            action=self.action_input.text(),
+            started_from=started_from,
+            started_to=started_to,
+        )
         self.audit_table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
             values = (
                 str(entry.id),
-                entry.timestamp.isoformat(),
+                display_datetime(entry.timestamp),
                 entry.entity_type,
                 entry.entity_key,
                 entry.action,
@@ -116,19 +122,12 @@ class AuditLogWidget(QWidget):
             for column, value in enumerate(values):
                 self.audit_table.setItem(row, column, readable_item(value))
         self.status_label.setStyleSheet("color: #344054;")
-        self.status_label.setText(f"查询完成：{len(entries)} 条审计日志（最新优先）")
+        self.status_label.setText(
+            f"查询完成：{len(entries)} 条审计日志（最新优先）"
+            f" · 更新于 {self._clock():%H:%M}"
+        )
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         """Reload append-only audit data whenever the tab becomes visible."""
         super().showEvent(event)
         self.refresh()
-
-    @staticmethod
-    def _parse_time(value: str) -> datetime | None:
-        text = value.strip()
-        if not text:
-            return None
-        try:
-            return datetime.fromisoformat(text)
-        except ValueError as error:
-            raise ValueError(f"无效 ISO 时间：{text}") from error

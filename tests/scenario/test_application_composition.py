@@ -5,6 +5,7 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -18,6 +19,7 @@ from smt_guard.feedback import FeedbackTone, VoicePrompt
 from smt_guard.scan import ProductConfiguration
 from smt_guard.ui.operator import OperatorSessionWidget
 from smt_guard.ui.records import RecordQueryWidget
+from smt_guard.ui.runs import ProductionRunManagementWidget
 
 
 class FakeAudioSink:
@@ -117,18 +119,31 @@ class ApplicationCompositionTests(unittest.TestCase):
 
         self.assertEqual(
             [
-                "扫码",
-                "设备与站位",
-                "导入配置",
-                "BOM 管理",
-                "产品配置",
-                "生产运行",
-                "记录查询",
-                "审计日志",
+                "作业 · 扫码",
+                "作业 · 生产运行",
+                "作业 · 记录查询",
+                "配置 · 设备与站位",
+                "配置 · 导入配置",
+                "配置 · BOM",
+                "配置 · 产品配置",
+                "系统 · 审计日志",
             ],
             labels,
         )
         self.assertEqual("SMT 扫码防错", self.runtime.window.windowTitle())
+
+    def test_empty_scan_state_opens_guided_import_page(self) -> None:
+        self.assertEqual(
+            self.runtime.window.SCAN_TAB,
+            self.runtime.window.tab_widget.currentIndex(),
+        )
+
+        self.runtime.scan_widget.import_configuration_button.click()
+
+        self.assertEqual(
+            self.runtime.window.IMPORT_TAB,
+            self.runtime.window.tab_widget.currentIndex(),
+        )
 
     def test_persists_data_across_runtime_reopen(self) -> None:
         self.runtime.master_data.add_device("SMT-01", "Machine 1", "Line A")
@@ -176,6 +191,7 @@ class ApplicationCompositionTests(unittest.TestCase):
         import_widget.version_input.setText("V1")
 
         import_widget.bom_import_button.click()
+        import_widget.review_button.click()
         import_widget.station_import_button.click()
         self.runtime.scan_widget.start_button.click()
         self.scanner_enter("SMT-01")
@@ -190,7 +206,22 @@ class ApplicationCompositionTests(unittest.TestCase):
         self.assertEqual(2, self.runtime.scan_widget.attempt_table.rowCount())
         self.assertEqual(1, self.runtime.scan_widget.progress_bar.value())
 
-        records_widget = self.runtime.window.tab_widget.widget(6)
+        run_widget = self.runtime.window.tab_widget.widget(self.runtime.window.RUNS_TAB)
+        if not isinstance(run_widget, ProductionRunManagementWidget):
+            raise AssertionError("Run tab contains an unexpected widget")
+        run_widget.view_records_button.click()
+        self.assertEqual(1, run_widget.detail_tabs.currentIndex())
+        self.assertEqual(2, run_widget.attempt_table.rowCount())
+        self.assertIn("NG 1", run_widget.attempt_summary_label.text())
+        direct_export_path = self.data_directory / "run-1-direct.csv"
+        with patch(
+            "smt_guard.ui.runs.QFileDialog.getSaveFileName",
+            return_value=(str(direct_export_path), "CSV 文件 (*.csv)"),
+        ):
+            run_widget.export_button.click()
+        self.assertTrue(direct_export_path.is_file())
+
+        records_widget = self.runtime.window.tab_widget.widget(self.runtime.window.RECORDS_TAB)
         if not isinstance(records_widget, RecordQueryWidget):
             raise AssertionError("Records tab contains an unexpected widget")
         records_widget.run_id_input.setText("RUN-1")
@@ -218,9 +249,12 @@ class ApplicationCompositionTests(unittest.TestCase):
             [
                 VoicePrompt.BOM_IMPORTED,
                 VoicePrompt.CONFIGURATION_IMPORTED,
-                VoicePrompt.RUN_STARTED,
+                VoicePrompt.SCAN_DEVICE,
+                VoicePrompt.SCAN_STATION,
+                VoicePrompt.SCAN_MATERIAL,
                 VoicePrompt.MATERIAL_NG,
                 VoicePrompt.RUN_COMPLETED,
+                VoicePrompt.RECORDS_EXPORTED,
                 VoicePrompt.RECORDS_EXPORTED,
             ],
             self.announcements.prompts,
@@ -237,6 +271,11 @@ class ApplicationCompositionTests(unittest.TestCase):
         control.sign_in_button.click()
 
         self.assertEqual("OP-02", self.runtime.operator_session.require())
+        self.assertTrue(control.operator_input.isHidden())
+        self.assertFalse(control.current_label.isHidden())
+        self.assertIn("OP-02", control.current_label.text())
+        control.switch_button.click()
+        self.assertFalse(control.operator_input.isHidden())
         self.assertEqual([VoicePrompt.OPERATOR_CONFIRMED], self.announcements.prompts)
 
 

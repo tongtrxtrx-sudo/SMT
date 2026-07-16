@@ -40,6 +40,9 @@ class VoicePrompt(Enum):
     MATERIAL_OK = "对料正确"
     MATERIAL_NG = "对料错误，请检查物料"
     RUN_COMPLETED = "全部对料完成"
+    SCAN_DEVICE = "请扫码设备码"
+    SCAN_STATION = "请扫码站位码"
+    SCAN_MATERIAL = "请扫码物料码"
     RECORDS_EXPORTED = "扫码记录导出成功"
     EXPORT_FAILED = "扫码记录导出失败，请查看屏幕提示"
 
@@ -49,6 +52,13 @@ class AnnouncementSink(Protocol):
 
     def announce(self, prompt: VoicePrompt) -> None:
         """Speak one fixed operator prompt."""
+
+
+SCAN_STEP_PROMPTS = {
+    ScanStep.DEVICE: VoicePrompt.SCAN_DEVICE,
+    ScanStep.STATION: VoicePrompt.SCAN_STATION,
+    ScanStep.MATERIAL: VoicePrompt.SCAN_MATERIAL,
+}
 
 
 class SilentAnnouncementSink:

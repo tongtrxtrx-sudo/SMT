@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -58,19 +59,29 @@ class ConfigurationImportWidget(QWidget):
         super().__init__(parent)
         self._workflow = workflow
         self._announcer = announcer or SilentAnnouncementSink()
+        self._current_step = 1
+        self._bom_document: BomDocument | None = None
         self._build_ui()
         self._connect_signals()
+        self._set_step(1)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        title = QLabel("BOM 与站位表导入")
+        title = QLabel("导入配置")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
+        self.step_indicator = QLabel()
+        self.step_indicator.setStyleSheet("font-size: 17px; font-weight: 600; padding: 8px;")
+        layout.addWidget(self.step_indicator)
 
+        self.bom_step = QGroupBox("第一步：导入 BOM")
+        bom_layout = QVBoxLayout(self.bom_step)
+        bom_layout.addWidget(QLabel("选择 BOM 工作簿。导入成功后会自动进入站位表步骤。"))
         form = QFormLayout()
         self.bom_path_input = QLineEdit()
         self.bom_browse_button = QPushButton("选择文件")
-        self.bom_import_button = QPushButton("导入 BOM")
+        self.bom_import_button = QPushButton("导入 BOM 并继续")
+        self.bom_import_button.setProperty("actionRole", "primary")
         form.addRow(
             "BOM 文件",
             self._path_row(
@@ -79,37 +90,59 @@ class ConfigurationImportWidget(QWidget):
                 self.bom_import_button,
             ),
         )
+        self.bom_version_input = QLineEdit()
+        self.bom_version_input.setPlaceholderText("可选；同一 BOM 修改后请填写新版本")
+        form.addRow("BOM 新版本", self.bom_version_input)
+        bom_layout.addLayout(form)
+        layout.addWidget(self.bom_step)
 
+        self.station_step = QGroupBox("第二步：导入站位表")
+        station_layout = QVBoxLayout(self.station_step)
+        self.bom_summary_label = QLabel("BOM：-")
+        self.bom_summary_label.setStyleSheet("color: #067647; font-weight: 600;")
+        station_layout.addWidget(self.bom_summary_label)
+        station_form = QFormLayout()
         self.station_path_input = QLineEdit()
         self.station_browse_button = QPushButton("选择文件")
-        self.station_import_button = QPushButton("导入站位表")
-        form.addRow(
+        station_form.addRow(
             "站位表文件",
             self._path_row(
                 self.station_path_input,
                 self.station_browse_button,
-                self.station_import_button,
             ),
         )
 
         self.station_sheet_input = QLineEdit("Worksheet")
         self.version_input = QLineEdit()
-        self.bom_version_input = QLineEdit()
-        self.bom_version_input.setPlaceholderText("可选；同一 BOM 修改后请填写新版本")
-        form.addRow("BOM 新版本", self.bom_version_input)
-        form.addRow("站位工作表", self.station_sheet_input)
-        form.addRow("产品版本", self.version_input)
-        layout.addLayout(form)
+        station_form.addRow("站位工作表", self.station_sheet_input)
+        station_form.addRow("产品版本", self.version_input)
+        station_layout.addLayout(station_form)
+        station_actions = QHBoxLayout()
+        self.back_to_bom_button = QPushButton("返回上一步")
+        self.review_button = QPushButton("下一步：校验")
+        self.review_button.setProperty("actionRole", "primary")
+        station_actions.addWidget(self.back_to_bom_button)
+        station_actions.addStretch(1)
+        station_actions.addWidget(self.review_button)
+        station_layout.addLayout(station_actions)
+        layout.addWidget(self.station_step)
 
+        self.validation_step = QGroupBox("第三步：校验并启用")
+        validation_layout = QVBoxLayout(self.validation_step)
+        self.validation_label = QLabel("确认摘要后执行校验。校验通过会立即启用产品配置。")
+        self.validation_label.setWordWrap(True)
+        validation_layout.addWidget(self.validation_label)
         summary = QHBoxLayout()
         self.product_label = QLabel("产品：-")
+        self.bom_number_label = QLabel("BOM：-")
         self.material_count_label = QLabel("BOM 组件：0")
         self.assignment_count_label = QLabel("站位分配：0")
         summary.addWidget(self.product_label)
+        summary.addWidget(self.bom_number_label)
         summary.addWidget(self.material_count_label)
         summary.addWidget(self.assignment_count_label)
         summary.addStretch(1)
-        layout.addLayout(summary)
+        validation_layout.addLayout(summary)
 
         self.assignment_table = QTableWidget(0, 3)
         self.assignment_table.setHorizontalHeaderLabels(("设备编码", "站位编码", "物料编码"))
@@ -117,7 +150,17 @@ class ConfigurationImportWidget(QWidget):
         self.assignment_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.assignment_table.verticalHeader().setVisible(False)
         set_column_widths(self.assignment_table, (150, 150, 240))
-        layout.addWidget(self.assignment_table, 1)
+        validation_layout.addWidget(self.assignment_table, 1)
+
+        validation_actions = QHBoxLayout()
+        self.back_to_station_button = QPushButton("返回修改")
+        self.station_import_button = QPushButton("校验并启用")
+        self.station_import_button.setProperty("actionRole", "success")
+        validation_actions.addWidget(self.back_to_station_button)
+        validation_actions.addStretch(1)
+        validation_actions.addWidget(self.station_import_button)
+        validation_layout.addLayout(validation_actions)
+        layout.addWidget(self.validation_step, 1)
 
         self.status_label = QLabel("请先导入 BOM，再导入站位表")
         self.status_label.setObjectName("feedbackLabel")
@@ -128,6 +171,9 @@ class ConfigurationImportWidget(QWidget):
         self.station_browse_button.clicked.connect(self._select_station_table)
         self.bom_import_button.clicked.connect(self._import_bom)
         self.station_import_button.clicked.connect(self._import_station_table)
+        self.review_button.clicked.connect(self._review_station_table)
+        self.back_to_bom_button.clicked.connect(lambda: self._set_step(1))
+        self.back_to_station_button.clicked.connect(lambda: self._set_step(2))
 
     @Slot()
     def _select_bom(self) -> None:
@@ -152,9 +198,28 @@ class ConfigurationImportWidget(QWidget):
             return
 
         self._preview_bom(document)
+        self._bom_document = document
         self._show_success(f"BOM 产品 {document.product.material_code} 导入成功")
         self._announcer.announce(VoicePrompt.BOM_IMPORTED)
         self.bom_imported.emit()
+        self._set_step(2)
+
+    @Slot()
+    def _review_station_table(self) -> None:
+        try:
+            self._required(self.station_path_input.text(), "站位表文件")
+            self._required(self.station_sheet_input.text(), "站位工作表")
+            self._required(self.version_input.text(), "产品版本")
+        except ValueError as error:
+            self._show_error(str(error))
+            return
+        self.station_import_button.setEnabled(True)
+        self.validation_label.setStyleSheet("color: #344054;")
+        self.validation_label.setText(
+            f"将校验 {Path(self.station_path_input.text().strip()).name}，"
+            f"通过后启用产品版本 {self.version_input.text().strip()}。"
+        )
+        self._set_step(3)
 
     @Slot()
     def _import_station_table(self) -> None:
@@ -173,6 +238,9 @@ class ConfigurationImportWidget(QWidget):
             return
 
         self._preview(result)
+        self.station_import_button.setEnabled(False)
+        self.validation_label.setStyleSheet("color: #067647; font-weight: 600;")
+        self.validation_label.setText("校验通过，产品配置已启用，可以前往扫码作业。")
         self._show_success(
             f"产品 {result.configuration.product_code}/{result.configuration.version} 导入成功"
         )
@@ -182,9 +250,14 @@ class ConfigurationImportWidget(QWidget):
     def _preview_bom(self, document: BomDocument) -> None:
         product = document.product
         self.product_label.setText(f"产品：{product.material_code} {product.name}")
+        self.bom_number_label.setText(f"BOM：{product.bom_number}")
         self.material_count_label.setText(f"BOM 组件：{len(document.materials)}")
         self.assignment_count_label.setText("站位分配：0")
         self.assignment_table.setRowCount(0)
+        self.bom_summary_label.setText(
+            f"已导入 BOM：{product.bom_number} · 产品 {product.material_code} · "
+            f"{len(document.materials)} 个物料"
+        )
 
     def _preview(self, result: ImportResult) -> None:
         product = result.document.product
@@ -217,6 +290,21 @@ class ConfigurationImportWidget(QWidget):
         self.status_label.setProperty("feedbackState", "error")
         self.status_label.setStyleSheet("color: #b42318;")
         self.status_label.setText(message)
+
+    def _set_step(self, step: int) -> None:
+        self._current_step = step
+        self.bom_step.setVisible(step == 1)
+        self.station_step.setVisible(step == 2)
+        self.validation_step.setVisible(step == 3)
+        labels = {
+            1: "● ① 导入 BOM   →   ② 导入站位表   →   ③ 校验并启用",
+            2: "✓ ① 导入 BOM   →   ● ② 导入站位表   →   ③ 校验并启用",
+            3: "✓ ① 导入 BOM   →   ✓ ② 导入站位表   →   ● ③ 校验并启用",
+        }
+        self.step_indicator.setText(labels[step])
+        self.step_indicator.setStyleSheet(
+            "font-size: 17px; font-weight: 600; padding: 8px; color: #175cd3;"
+        )
 
     @staticmethod
     def _required(value: str, label: str) -> str:

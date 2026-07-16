@@ -136,11 +136,16 @@ def create_runtime(
         configuration_widget = ConfigurationManagementWidget(
             configurations, operator_session.require, announcer=announcer
         )
-        run_widget = ProductionRunManagementWidget(runs)
+        run_widget = ProductionRunManagementWidget(
+            runs,
+            exporter=CsvRecordExporter(runs),
+            announcer=announcer,
+            clock=clock,
+        )
         records_widget = RecordQueryWidget(
             runs, CsvRecordExporter(runs), announcer=announcer
         )
-        audit_widget = AuditLogWidget(audits)
+        audit_widget = AuditLogWidget(audits, clock=clock)
         import_widget.import_completed.connect(scan_widget.refresh_configurations)
         import_widget.import_completed.connect(configuration_widget.refresh)
         import_widget.bom_imported.connect(bom_widget.refresh)
@@ -162,6 +167,10 @@ def create_runtime(
             operator_widget,
         )
         run_widget.start_requested.connect(lambda: window.tab_widget.setCurrentIndex(0))
+        for import_requester in (scan_widget, bom_widget, configuration_widget):
+            import_requester.import_requested.connect(
+                lambda: window.tab_widget.setCurrentIndex(window.IMPORT_TAB)
+            )
 
         def resume_run(run_id: str) -> None:
             scan_widget.resume_run(run_id)
@@ -223,7 +232,7 @@ def _create_chinese_speech_engine(engine_name: str) -> QTextToSpeech | None:
         if chinese_voice is None:
             return None
         engine.setVoice(chinese_voice)
-        engine.setRate(-0.1)
+        engine.setRate(-0.3)
         engine.setVolume(1.0)
     except Exception:
         return None
@@ -242,7 +251,13 @@ def _create_windows_announcer() -> AnnouncementSink:
         engine = _create_chinese_speech_engine(engine_name)
         if engine is None:
             continue
-        return WindowsSpeechSink(engine.say, stopper=engine.stop, engine_owner=engine)
+        return WindowsSpeechSink(
+            engine.say,
+            stopper=engine.stop,
+            rate_setter=engine.setRate,
+            volume_setter=engine.setVolume,
+            engine_owner=engine,
+        )
     return SilentAnnouncementSink()
 
 

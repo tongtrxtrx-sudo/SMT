@@ -94,6 +94,11 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
         self.fill_required_inputs(widget)
 
         widget.bom_import_button.click()
+        self.assertTrue(widget.bom_step.isHidden())
+        self.assertFalse(widget.station_step.isHidden())
+        self.assertIn("501000087", widget.bom_summary_label.text())
+        widget.review_button.click()
+        self.assertFalse(widget.validation_step.isHidden())
         widget.station_import_button.click()
 
         self.assertEqual(
@@ -110,6 +115,8 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
         assert material_item is not None
         self.assertEqual("013000081", material_item.text())
         self.assertEqual("success", widget.status_label.property("feedbackState"))
+        self.assertFalse(widget.station_import_button.isEnabled())
+        self.assertIn("已启用", widget.validation_label.text())
         self.assertEqual(
             [VoicePrompt.BOM_IMPORTED, VoicePrompt.CONFIGURATION_IMPORTED],
             announcer.prompts,
@@ -122,6 +129,7 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
         self.fill_required_inputs(widget)
 
         widget.bom_import_button.click()
+        widget.review_button.click()
         widget.station_import_button.click()
 
         self.assertIn("Row 7", widget.status_label.text())

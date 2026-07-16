@@ -78,15 +78,25 @@ class WindowsSpeechSink:
         speaker: Callable[[str], object],
         *,
         stopper: Callable[[], object] | None = None,
+        rate_setter: Callable[[float], object] | None = None,
+        volume_setter: Callable[[float], object] | None = None,
         engine_owner: object | None = None,
     ) -> None:
         self._speaker = speaker
         self._stopper = stopper
+        self._rate_setter = rate_setter
+        self._volume_setter = volume_setter
         self._engine_owner = engine_owner
 
     def announce(self, prompt: VoicePrompt) -> None:
         if self._stopper is not None:
             with suppress(Exception):
                 self._stopper()
+        if self._volume_setter is not None:
+            with suppress(Exception):
+                self._volume_setter(1.0)
+        if self._rate_setter is not None:
+            with suppress(Exception):
+                self._rate_setter(-0.3)
         with suppress(Exception):
             self._speaker(prompt.value)

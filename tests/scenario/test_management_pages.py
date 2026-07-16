@@ -7,7 +7,8 @@ from tempfile import TemporaryDirectory
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QDateTimeEdit
 
 from smt_guard.bom import BomDocument, Material, Product
 from smt_guard.feedback import FeedbackTone, VoicePrompt
@@ -66,6 +67,7 @@ class ManagementPageTests(unittest.TestCase):
         self.master = SqliteMasterDataRepository(self.connection)
         self.master.add_device("SMT-01", "Machine", "Line A", actor="OP-UI")
         self.master.add_station("SMT-01", "F-01", actor="OP-UI")
+        self.clock = lambda: datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
 
     @staticmethod
     def document(material: str) -> BomDocument:
@@ -95,6 +97,9 @@ class ManagementPageTests(unittest.TestCase):
             announcer=announcer,
         )
         self.addCleanup(widget.close)
+        widget.resize(1180, 700)
+        widget.show()
+        self.app.processEvents()
 
         self.assertEqual(2, widget.version_table.rowCount())
         self.assertEqual(
@@ -106,10 +111,29 @@ class ManagementPageTests(unittest.TestCase):
         self.assertTrue(widget.activate_button.isEnabled())
         self.assertFalse(widget.disable_button.isEnabled())
         self.assertIn("SHA-256", widget.detail_label.text())
-        sha_item = widget.version_table.item(0, 4)
-        assert sha_item is not None
-        self.assertEqual(sha_item.text(), sha_item.toolTip())
-        self.assertGreaterEqual(widget.version_table.columnWidth(1), 170)
+        self.assertIn("来源：", widget.detail_label.text())
+        self.assertIn("by OP-UI", widget.detail_label.text())
+        self.assertEqual(5, widget.version_table.columnCount())
+        self.assertEqual("物料数", widget.version_table.horizontalHeaderItem(3).text())  # type: ignore[union-attr]
+        self.assertGreaterEqual(widget.version_table.columnWidth(1), 150)
+        self.assertEqual(
+            0,
+            widget.version_table.horizontalScrollBar().maximum(),
+            msg=(
+                f"table={widget.version_table.width()} "
+                f"viewport={widget.version_table.viewport().width()} "
+                f"columns={[widget.version_table.columnWidth(i) for i in range(5)]}"
+            ),
+        )
+        self.assertEqual(0, widget.material_table.horizontalScrollBar().maximum())
+        self.assertEqual(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+            widget.version_table.horizontalScrollBarPolicy(),
+        )
+        self.assertEqual(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+            widget.material_table.horizontalScrollBarPolicy(),
+        )
         widget.compare_button.click()
         self.assertIn("M-2", widget.compare_label.text())
 
@@ -199,8 +223,11 @@ class ManagementPageTests(unittest.TestCase):
             interrupted_at=datetime(2026, 7, 14, 10, 1, tzinfo=UTC),
             reason="换线",
         )
-        run_widget = ProductionRunManagementWidget(runs)
+        run_widget = ProductionRunManagementWidget(runs, clock=self.clock)
         self.addCleanup(run_widget.close)
+        run_widget.resize(1180, 700)
+        run_widget.show()
+        self.app.processEvents()
         run_widget.status_combo.setCurrentIndex(3)
         run_widget.query_input.setText("RUN-UI")
         run_widget.refresh()
@@ -208,16 +235,41 @@ class ManagementPageTests(unittest.TestCase):
         run_id_item = run_widget.run_table.item(0, 0)
         assert run_id_item is not None
         self.assertEqual("RUN-UI", run_id_item.toolTip())
-        self.assertGreaterEqual(run_widget.run_table.columnWidth(0), 220)
+        self.assertEqual(6, run_widget.run_table.columnCount())
+        product_version_header = run_widget.run_table.horizontalHeaderItem(1)
+        assert product_version_header is not None
+        self.assertEqual("产品 / 版本", product_version_header.text())
+        self.assertGreaterEqual(run_widget.run_table.columnWidth(0), 160)
+        self.assertEqual(0, run_widget.run_table.horizontalScrollBar().maximum())
+        self.assertEqual(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+            run_widget.run_table.horizontalScrollBarPolicy(),
+        )
+        self.assertIn("更新于 12:00", run_widget.status_label.text())
 
         resumed: list[str] = []
         run_widget.resume_requested.connect(resumed.append)
         run_widget.resume_button.click()
         self.assertEqual(["RUN-UI"], resumed)
         self.assertEqual(1, run_widget.station_table.rowCount())
+        self.assertEqual(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+            run_widget.station_table.horizontalScrollBarPolicy(),
+        )
+        self.assertEqual(0, run_widget.station_table.horizontalScrollBar().maximum())
         self.assertIn("OP-UI", run_widget.snapshot_label.text())
+        self.assertIn("结束/中断：2026-07-14 10:01", run_widget.snapshot_label.text())
+        self.assertIn("中断原因：换线", run_widget.snapshot_label.text())
+        self.assertIsInstance(run_widget.started_from_input, QDateTimeEdit)
+        self.assertEqual("yyyy-MM-dd HH:mm", run_widget.started_from_input.displayFormat())
+        run_widget.date_range.today_button.click()
+        self.assertEqual(0, run_widget.run_table.rowCount())
+        run_widget.date_range.seven_days_button.click()
+        self.assertEqual(1, run_widget.run_table.rowCount())
 
-        audit_widget = AuditLogWidget(SqliteAuditRepository(self.connection))
+        audit_widget = AuditLogWidget(
+            SqliteAuditRepository(self.connection), clock=self.clock
+        )
         self.addCleanup(audit_widget.close)
         audit_widget.actor_input.setText("OP-UI")
         audit_widget.entity_type_input.setText("PRODUCTION_RUN")
@@ -231,14 +283,13 @@ class ManagementPageTests(unittest.TestCase):
         self.assertEqual(entity_key.text(), entity_key.toolTip())
         self.assertGreaterEqual(audit_widget.audit_table.columnWidth(3), 240)
         self.assertEqual(RunStatus.INTERRUPTED, runs.get("RUN-UI").status)
-
-        audit_widget.started_from_input.setText("not-a-time")
-        audit_widget.refresh()
-        self.assertIn("无效 ISO 时间", audit_widget.status_label.text())
+        self.assertIsInstance(audit_widget.started_from_input, QDateTimeEdit)
+        self.assertNotIn("ISO", audit_widget.status_label.text())
+        self.assertIn("更新于 12:00", audit_widget.status_label.text())
 
     def test_audit_page_distinguishes_unqueried_zero_and_refreshes_when_activated(self) -> None:
         repository = SqliteAuditRepository(self.connection)
-        widget = AuditLogWidget(repository)
+        widget = AuditLogWidget(repository, clock=self.clock)
         self.addCleanup(widget.close)
         self.assertIn("尚未查询", widget.status_label.text())
 
@@ -273,7 +324,7 @@ class ManagementPageTests(unittest.TestCase):
             interrupted_at=datetime(2026, 7, 14, 10, 1, tzinfo=UTC),
             reason="换线",
         )
-        widget = ProductionRunManagementWidget(runs)
+        widget = ProductionRunManagementWidget(runs, clock=self.clock)
         self.addCleanup(widget.close)
         self.assertTrue(widget.resume_button.isEnabled())
         self.assertIn("OP-OLD", widget.snapshot_label.text())
@@ -335,9 +386,9 @@ class ManagementPageTests(unittest.TestCase):
         self.assertFalse(widget.scan_input.isEnabled())
         self.assertEqual(
             [
-                VoicePrompt.RUN_STARTED,
+                VoicePrompt.SCAN_DEVICE,
                 VoicePrompt.RUN_INTERRUPTED,
-                VoicePrompt.RUN_RESUMED,
+                VoicePrompt.SCAN_DEVICE,
                 VoicePrompt.RUN_INTERRUPTED,
             ],
             announcer.prompts,
@@ -353,6 +404,11 @@ class ManagementPageTests(unittest.TestCase):
         self.addCleanup(bom_widget.close)
         self.assertFalse(bom_widget.activate_button.isEnabled())
         self.assertFalse(bom_widget.disable_button.isEnabled())
+        bom_import_requests: list[bool] = []
+        bom_widget.import_requested.connect(lambda: bom_import_requests.append(True))
+        self.assertFalse(bom_widget.import_button.isHidden())
+        bom_widget.import_button.click()
+        self.assertEqual([True], bom_import_requests)
         bom_widget.activate_button.click()
         bom_widget.compare_button.click()
         self.assertIn("请选择", bom_widget.status_label.text())
@@ -365,6 +421,13 @@ class ManagementPageTests(unittest.TestCase):
         self.addCleanup(config_widget.close)
         self.assertFalse(config_widget.activate_button.isEnabled())
         self.assertFalse(config_widget.disable_button.isEnabled())
+        configuration_import_requests: list[bool] = []
+        config_widget.import_requested.connect(
+            lambda: configuration_import_requests.append(True)
+        )
+        self.assertFalse(config_widget.import_button.isHidden())
+        config_widget.import_button.click()
+        self.assertEqual([True], configuration_import_requests)
         config_widget.copy_button.click()
         config_widget.activate_button.click()
         config_widget.validate_button.click()
@@ -375,11 +438,12 @@ class ManagementPageTests(unittest.TestCase):
             announcer.prompts,
         )
 
-        run_widget = ProductionRunManagementWidget(SqliteProductionRunRepository(self.connection))
+        run_widget = ProductionRunManagementWidget(
+            SqliteProductionRunRepository(self.connection), clock=self.clock
+        )
         self.addCleanup(run_widget.close)
-        run_widget.started_from_input.setText("invalid")
-        run_widget.refresh()
-        self.assertIn("无效 ISO 时间", run_widget.status_label.text())
+        self.assertIsInstance(run_widget.started_to_input, QDateTimeEdit)
+        self.assertEqual("yyyy-MM-dd HH:mm", run_widget.started_to_input.displayFormat())
 
 
 if __name__ == "__main__":

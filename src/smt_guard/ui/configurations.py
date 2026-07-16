@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from smt_guard.configuration import ConfigurationStatus, ProductConfigurationRecord
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.scan import ProductConfiguration
+from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import readable_item, set_column_widths
 
 
@@ -56,6 +57,7 @@ class ConfigurationManagementWidget(QWidget):
     """Edit drafts and manage released station-configuration versions."""
 
     configurations_changed = Signal()
+    import_requested = Signal()
 
     def __init__(
         self,
@@ -103,6 +105,10 @@ class ConfigurationManagementWidget(QWidget):
         editor_layout = QVBoxLayout(editor)
         self.editor_label = QLabel("请选择配置")
         editor_layout.addWidget(self.editor_label)
+        self.import_button = QPushButton("前往导入配置")
+        self.import_button.setProperty("actionRole", "primary")
+        self.import_button.hide()
+        editor_layout.addWidget(self.import_button)
         self.assignment_table = QTableWidget(0, 3)
         self.assignment_table.setHorizontalHeaderLabels(("设备编码", "站位编码", "物料编码"))
         self.assignment_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -112,6 +118,7 @@ class ConfigurationManagementWidget(QWidget):
         self.add_row_button = QPushButton("新增行")
         self.remove_row_button = QPushButton("删除行")
         self.save_draft_button = QPushButton("保存修改")
+        self.save_draft_button.setProperty("actionRole", "primary")
         row_actions.addWidget(self.add_row_button)
         row_actions.addWidget(self.remove_row_button)
         row_actions.addWidget(self.save_draft_button)
@@ -126,7 +133,9 @@ class ConfigurationManagementWidget(QWidget):
         self.copy_button = QPushButton("复制新版本")
         self.validate_button = QPushButton("校验")
         self.activate_button = QPushButton("启用")
+        self.activate_button.setProperty("actionRole", "success")
         self.disable_button = QPushButton("停用")
+        self.disable_button.setProperty("actionRole", "danger")
         lifecycle.addWidget(self.new_version_input)
         for button in (
             self.copy_button,
@@ -149,6 +158,7 @@ class ConfigurationManagementWidget(QWidget):
         self.validate_button.clicked.connect(self._validate)
         self.activate_button.clicked.connect(self._activate_selected)
         self.disable_button.clicked.connect(self._disable_selected)
+        self.import_button.clicked.connect(self.import_requested.emit)
 
     @Slot()
     def refresh(self) -> None:
@@ -169,16 +179,18 @@ class ConfigurationManagementWidget(QWidget):
                 configuration.version,
                 self._status_text(record),
                 "" if configuration.bom_version_id is None else str(configuration.bom_version_id),
-                record.created_at.isoformat(),
+                display_datetime(record.created_at),
                 record.created_by,
             )
             for column, value in enumerate(values):
                 self.configuration_table.setItem(row, column, readable_item(value))
         if self._records:
+            self.import_button.hide()
             self.configuration_table.selectRow(0)
             self._render_selected()
         else:
-            self.editor_label.setText("没有匹配的配置")
+            self.editor_label.setText("没有匹配的配置，请先完成导入配置")
+            self.import_button.show()
             self.assignment_table.setRowCount(0)
             self.activate_button.setEnabled(False)
             self.disable_button.setEnabled(False)

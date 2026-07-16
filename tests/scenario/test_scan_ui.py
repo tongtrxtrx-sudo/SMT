@@ -83,7 +83,42 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertIn("RUN-1", widget.run_label.text())
         self.assertTrue(widget.scan_input.isEnabled())
         self.assertIn("设备", widget.feedback_label.text())
-        self.assertEqual([VoicePrompt.RUN_STARTED], self.announcements.prompts)
+        self.assertIn("#eff8ff", widget.feedback_label.styleSheet())
+        self.assertFalse(widget.attempt_table.isVisible())
+        self.assertEqual([VoicePrompt.SCAN_DEVICE], self.announcements.prompts)
+
+    def test_empty_configuration_guides_operator_to_import(self) -> None:
+        widget = self.make_widget([])
+        requested: list[bool] = []
+        widget.import_requested.connect(lambda: requested.append(True))
+
+        self.assertFalse(widget.start_button.isEnabled())
+        self.assertFalse(widget.configuration_combo.isEnabled())
+        self.assertFalse(widget.import_configuration_button.isHidden())
+        widget.import_configuration_button.click()
+
+        self.assertEqual([True], requested)
+
+    def test_focus_status_and_history_keep_scanner_as_primary_input(self) -> None:
+        widget = self.make_widget([self.configuration])
+        widget.show()
+        widget.start_button.click()
+        self.app.processEvents()
+
+        self.assertTrue(widget.scan_input.hasFocus())
+        self.assertIn("已就绪", widget.scanner_status_button.text())
+        widget.history_button.click()
+        self.assertTrue(widget.attempt_table.isVisible())
+        widget.history_button.click()
+        self.assertFalse(widget.attempt_table.isVisible())
+
+        widget.history_button.setFocus()
+        self.app.processEvents()
+        self.assertIn("未激活", widget.scanner_status_button.text())
+        widget.scanner_status_button.click()
+        self.app.processEvents()
+        self.assertTrue(widget.scan_input.hasFocus())
+        self.assertIn("已就绪", widget.scanner_status_button.text())
 
     def test_ok_scan_flow_updates_prompt_progress_and_history(self) -> None:
         widget = self.make_widget([self.configuration])
@@ -91,8 +126,11 @@ class ScanWidgetTests(unittest.TestCase):
 
         self.scan(widget, "SMT-01")
         self.assertIn("站位", widget.feedback_label.text())
+        self.assertIn("#fffaeb", widget.feedback_label.styleSheet())
         self.scan(widget, "F-01")
         self.assertIn("物料", widget.feedback_label.text())
+        self.assertFalse(widget.expected_label.isHidden())
+        self.assertIn("#ecfdf3", widget.feedback_label.styleSheet())
         self.scan(widget, "013000081")
 
         self.assertEqual("ok", widget.feedback_label.property("feedbackState"))
@@ -100,7 +138,12 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertEqual(1, widget.attempt_table.rowCount())
         self.assertEqual([FeedbackTone.OK], self.audio.tones)
         self.assertEqual(
-            [VoicePrompt.RUN_STARTED, VoicePrompt.RUN_COMPLETED],
+            [
+                VoicePrompt.SCAN_DEVICE,
+                VoicePrompt.SCAN_STATION,
+                VoicePrompt.SCAN_MATERIAL,
+                VoicePrompt.RUN_COMPLETED,
+            ],
             self.announcements.prompts,
         )
 
@@ -126,19 +169,29 @@ class ScanWidgetTests(unittest.TestCase):
 
     def test_ng_scan_shows_expected_and_scanned_material(self) -> None:
         widget = self.make_widget([self.configuration])
+        widget.show()
         widget.start_button.click()
         self.scan(widget, "SMT-01")
         self.scan(widget, "F-01")
 
         self.scan(widget, "999999999")
+        self.app.processEvents()
 
         self.assertEqual("ng", widget.feedback_label.property("feedbackState"))
+        self.assertIn("#fef3f2", widget.feedback_label.styleSheet())
         self.assertIn("013000081", widget.expected_label.text())
         self.assertIn("999999999", widget.scanned_label.text())
         self.assertEqual(0, widget.progress_bar.value())
         self.assertEqual(1, widget.attempt_table.rowCount())
+        self.assertTrue(widget.scan_input.hasFocus())
+        self.assertIn("已就绪", widget.scanner_status_button.text())
         self.assertEqual(
-            [VoicePrompt.RUN_STARTED, VoicePrompt.MATERIAL_NG],
+            [
+                VoicePrompt.SCAN_DEVICE,
+                VoicePrompt.SCAN_STATION,
+                VoicePrompt.SCAN_MATERIAL,
+                VoicePrompt.MATERIAL_NG,
+            ],
             self.announcements.prompts,
         )
 
@@ -158,9 +211,9 @@ class ScanWidgetTests(unittest.TestCase):
 
         self.assertEqual(
             [
-                VoicePrompt.RUN_STARTED,
+                VoicePrompt.SCAN_DEVICE,
                 VoicePrompt.SCAN_REJECTED,
-                VoicePrompt.RUN_REPLACED,
+                VoicePrompt.SCAN_DEVICE,
             ],
             self.announcements.prompts,
         )
@@ -181,9 +234,36 @@ class ScanWidgetTests(unittest.TestCase):
         self.scan(widget, "013000081")
 
         self.assertEqual(
-            [VoicePrompt.RUN_STARTED, VoicePrompt.MATERIAL_OK],
+            [
+                VoicePrompt.SCAN_DEVICE,
+                VoicePrompt.SCAN_STATION,
+                VoicePrompt.SCAN_MATERIAL,
+                VoicePrompt.SCAN_STATION,
+            ],
             self.announcements.prompts,
         )
+
+    def test_attempt_time_is_displayed_to_minute_precision_only(self) -> None:
+        widget = ScanWidget(
+            FakeConfigurationSource([self.configuration]),
+            self.repository,
+            self.audio,
+            clock=lambda: datetime(2026, 7, 11, 12, 34, 56, 789000, tzinfo=UTC),
+            run_id_factory=lambda: "RUN-1",
+            announcer=self.announcements,
+        )
+        self.addCleanup(widget.close)
+        widget.start_button.click()
+        self.scan(widget, "SMT-01")
+        self.scan(widget, "F-01")
+        self.scan(widget, "013000081")
+
+        time_item = widget.attempt_table.item(0, 0)
+        self.assertIsNotNone(time_item)
+        if time_item is None:
+            self.fail("Missing attempt timestamp cell")
+        self.assertEqual("2026-07-11 12:34", time_item.text())
+        self.assertEqual(56, self.repository.list_for_run("RUN-1")[0].timestamp.second)
 
 
 if __name__ == "__main__":

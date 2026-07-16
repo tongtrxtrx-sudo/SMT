@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from typing import Protocol
 
-from PySide6.QtCore import Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from smt_guard.bom import BomStatus, BomVersion
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.ui.errors import operator_error_message
+from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import readable_item, set_column_widths
 
 
@@ -41,7 +42,8 @@ class BomManagementWidget(QWidget):
     """Inspect provenance, compare versions, and perform BOM lifecycle actions."""
 
     bom_changed = Signal()
-    HEADERS = ("产品", "版本", "状态", "来源文件", "SHA-256", "导入时间", "操作人")
+    import_requested = Signal()
+    HEADERS = ("产品", "版本", "状态", "物料数", "导入时间")
 
     def __init__(
         self,
@@ -78,28 +80,43 @@ class BomManagementWidget(QWidget):
         self.version_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.version_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.version_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.version_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self.version_table.verticalHeader().setVisible(False)
-        set_column_widths(self.version_table, (120, 170, 90, 180, 260, 190, 120))
+        set_column_widths(self.version_table, (120, 150, 80, 70, 130))
+        self.version_table.horizontalHeader().setStretchLastSection(True)
         splitter.addWidget(self.version_table)
         detail = QWidget()
+        detail.setMaximumWidth(580)
         detail_layout = QVBoxLayout(detail)
         self.detail_label = QLabel("请选择 BOM 版本")
         self.detail_label.setWordWrap(True)
         detail_layout.addWidget(self.detail_label)
+        self.import_button = QPushButton("导入第一个 BOM")
+        self.import_button.setProperty("actionRole", "primary")
+        self.import_button.hide()
+        detail_layout.addWidget(self.import_button)
         self.material_table = QTableWidget(0, 5)
         self.material_table.setHorizontalHeaderLabels(
             ("物料编码", "名称", "规格", "单位用量", "分类")
         )
         self.material_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        set_column_widths(self.material_table, (200, 150, 180, 100, 160))
+        self.material_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        set_column_widths(self.material_table, (130, 100, 120, 70, 100))
+        self.material_table.horizontalHeader().setStretchLastSection(True)
         detail_layout.addWidget(self.material_table, 1)
         splitter.addWidget(detail)
-        splitter.setSizes((700, 500))
+        splitter.setSizes((600, 600))
         layout.addWidget(splitter, 1)
 
         actions = QHBoxLayout()
         self.activate_button = QPushButton("启用")
+        self.activate_button.setProperty("actionRole", "success")
         self.disable_button = QPushButton("停用")
+        self.disable_button.setProperty("actionRole", "danger")
         actions.addWidget(self.activate_button)
         actions.addWidget(self.disable_button)
         actions.addStretch(1)
@@ -124,6 +141,7 @@ class BomManagementWidget(QWidget):
         self.activate_button.clicked.connect(self._activate_selected)
         self.disable_button.clicked.connect(self._disable_selected)
         self.compare_button.clicked.connect(self._compare)
+        self.import_button.clicked.connect(self.import_requested.emit)
 
     @Slot()
     def refresh(self) -> None:
@@ -137,10 +155,8 @@ class BomManagementWidget(QWidget):
                 version.document.product.material_code,
                 version.version,
                 self._status_text(version),
-                version.source_filename,
-                version.source_sha256,
-                version.imported_at.isoformat(),
-                version.imported_by,
+                len(version.document.materials),
+                display_datetime(version.imported_at),
             )
             for column, value in enumerate(values):
                 self.version_table.setItem(row, column, readable_item(value))
@@ -148,15 +164,19 @@ class BomManagementWidget(QWidget):
             self.compare_first.addItem(label, version.id)
             self.compare_second.addItem(label, version.id)
         if self._versions:
+            self.import_button.hide()
             self.version_table.selectRow(0)
             if len(self._versions) > 1:
                 self.compare_second.setCurrentIndex(1)
             self._render_selected()
+            self.status_label.setText(f"找到 {len(self._versions)} 个 BOM 版本")
         else:
-            self.detail_label.setText("没有匹配的 BOM 版本")
+            self.detail_label.setText("没有匹配的 BOM 版本，请先导入 BOM")
+            self.import_button.show()
             self.material_table.setRowCount(0)
             self.activate_button.setEnabled(False)
             self.disable_button.setEnabled(False)
+            self.status_label.setText("没有匹配的 BOM 版本")
 
     @Slot()
     def _render_selected(self) -> None:
@@ -173,7 +193,7 @@ class BomManagementWidget(QWidget):
             f"产品：{product.material_code} {product.name}\n"
             f"BOM：{product.bom_number} {product.bom_name}\n"
             f"规格：{product.specification}\n来源：{version.source_filename}\n"
-            f"SHA-256：{version.source_sha256}\n导入：{version.imported_at.isoformat()} "
+            f"SHA-256：{version.source_sha256}\n导入：{display_datetime(version.imported_at)} "
             f"by {version.imported_by}"
         )
         materials = sorted(version.document.materials.values(), key=lambda item: item.code)
