@@ -7,10 +7,13 @@ from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QVBoxLayout,
@@ -81,8 +84,8 @@ class BomManagementWidget(QWidget):
         query_card.setMinimumWidth(760)
         query_card.setMaximumWidth(980)
         query_layout = QVBoxLayout(query_card)
-        query_layout.addWidget(section_heading("筛选 BOM", "按产品编码快速定位版本"))
         query = QHBoxLayout()
+        query.addWidget(section_heading("筛选 BOM"))
         self.product_filter = QLineEdit()
         self.product_filter.setPlaceholderText("按产品编码筛选")
         self.product_filter.setClearButtonEnabled(True)
@@ -123,12 +126,16 @@ class BomManagementWidget(QWidget):
             self.version_table,
             "boms/versions",
             self._layout_store,
+            narrow_hidden=(2, 4),
+            narrow_threshold=620,
         )
         version_layout.addWidget(self.version_table, 1)
         splitter.addWidget(version_card)
         detail = content_card(object_name="detailCard")
         detail.setMinimumWidth(520)
         detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(8, 8, 8, 8)
+        detail_layout.setSpacing(5)
         detail_layout.addWidget(section_heading("版本详情", "低频来源信息与物料清单集中展示"))
         metrics = QHBoxLayout()
         self.bom_status_chip = QLabel("未选择")
@@ -142,13 +149,31 @@ class BomManagementWidget(QWidget):
         detail_layout.addLayout(metrics)
         self.detail_label = QLabel("请选择 BOM 版本")
         self.detail_label.setWordWrap(True)
-        detail_layout.addWidget(self.detail_label)
+        self.detail_label.setStyleSheet("font-size: 13px;")
+        self.detail_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Minimum,
+        )
+        self.detail_scroll = QScrollArea()
+        self.detail_scroll.setWidgetResizable(True)
+        self.detail_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.detail_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.detail_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.detail_scroll.setMinimumHeight(82)
+        self.detail_scroll.setMaximumHeight(92)
+        self.detail_scroll.setWidget(self.detail_label)
+        detail_layout.addWidget(self.detail_scroll)
         self.import_button = QPushButton("导入第一个 BOM")
         self.import_button.setProperty("actionRole", "primary")
         self.import_button.hide()
         detail_layout.addWidget(self.import_button)
         self.lifecycle_hint_label = QLabel("请选择 BOM 版本")
         self.lifecycle_hint_label.setWordWrap(True)
+        self.lifecycle_hint_label.setMaximumHeight(42)
         set_feedback(self.lifecycle_hint_label, "neutral", "请选择 BOM 版本")
         detail_layout.addWidget(self.lifecycle_hint_label)
         detail_layout.addWidget(section_heading("物料明细"))
@@ -161,7 +186,7 @@ class BomManagementWidget(QWidget):
         self.material_table.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        set_column_widths(self.material_table, (130, 100, 120, 70, 100))
+        set_column_widths(self.material_table, (130, 100, 180, 70, 120))
         set_responsive_columns(
             self.material_table,
             stretch=(0, 1, 2, 4),
@@ -172,6 +197,7 @@ class BomManagementWidget(QWidget):
             "boms/materials",
             self._layout_store,
         )
+        self.material_table.setMinimumHeight(72)
         detail_layout.addWidget(self.material_table, 1)
         splitter.addWidget(detail)
         splitter.setChildrenCollapsible(False)
@@ -182,9 +208,9 @@ class BomManagementWidget(QWidget):
         layout.addWidget(splitter, 1)
 
         compare_card = content_card(object_name="actionCard")
-        compare_layout = QVBoxLayout(compare_card)
-        compare_layout.addWidget(section_heading("版本比较", "对比两个 BOM 的新增、删除和变化物料"))
-        compare = QHBoxLayout()
+        compare = QHBoxLayout(compare_card)
+        compare.setContentsMargins(8, 8, 8, 8)
+        compare.addWidget(section_heading("版本比较"))
         self.compare_first = QComboBox()
         self.compare_second = QComboBox()
         self.compare_button = QPushButton("比较版本")
@@ -194,7 +220,6 @@ class BomManagementWidget(QWidget):
         compare.addWidget(self.compare_second)
         compare.addWidget(self.compare_button)
         compare.addWidget(self.compare_label, 1)
-        compare_layout.addLayout(compare)
         layout.addWidget(compare_card)
         self.status_label = QLabel("就绪")
         set_feedback(self.status_label, "neutral", "就绪")
@@ -310,12 +335,22 @@ class BomManagementWidget(QWidget):
                 "neutral",
                 "这是历史或待配置版本，可用于比较与追溯；它不会单独决定是否允许扫码。",
             )
-        self.detail_label.setText(
-            f"产品：{product.material_code} {product.name}\n"
+        short_sha = (
+            version.source_sha256
+            if len(version.source_sha256) <= 36
+            else f"{version.source_sha256[:18]}…{version.source_sha256[-14:]}"
+        )
+        detail = (
+            f"产品：{product.material_code} {product.name} | "
             f"BOM：{product.bom_number} {product.bom_name}\n"
-            f"规格：{product.specification}\n来源：{version.source_filename}\n"
-            f"SHA-256：{version.source_sha256}\n导入：{display_datetime(version.imported_at)} "
-            f"by {version.imported_by}"
+            f"规格：{product.specification}\n"
+            f"来源：{version.source_filename} | "
+            f"导入：{display_datetime(version.imported_at)} by {version.imported_by}\n"
+            f"SHA-256：{short_sha}"
+        )
+        self.detail_label.setText(detail)
+        self.detail_label.setToolTip(
+            detail.replace(short_sha, version.source_sha256)
         )
         materials = sorted(version.document.materials.values(), key=lambda item: item.code)
         self.material_table.setRowCount(len(materials))

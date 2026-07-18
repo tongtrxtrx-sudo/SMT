@@ -186,6 +186,7 @@ def create_runtime(
             records_widget,
             audit_widget,
             operator_widget,
+            layout_store=layout_store,
         )
         run_widget.start_requested.connect(lambda: window.tab_widget.setCurrentIndex(0))
         for import_requester in (scan_widget, bom_widget, configuration_widget):

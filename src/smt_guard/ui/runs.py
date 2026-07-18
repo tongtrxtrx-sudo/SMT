@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTabWidget,
@@ -42,6 +44,12 @@ from smt_guard.ui.tables import (
     set_column_widths,
     set_responsive_columns,
 )
+
+RUN_STATUS_TEXT = {
+    RunStatus.RUNNING: "运行中",
+    RunStatus.COMPLETED: "已完成",
+    RunStatus.INTERRUPTED: "已中断",
+}
 
 
 class ProductionRunReader(Protocol):
@@ -102,8 +110,8 @@ class ProductionRunManagementWidget(QWidget):
         )
         filter_card = content_card(object_name="filterCard")
         filter_layout = QVBoxLayout(filter_card)
-        filter_layout.addWidget(section_heading("筛选运行", "默认查询最近 7 天"))
         filters = QHBoxLayout()
+        filters.addWidget(section_heading("筛选运行"))
         self.query_input = QLineEdit()
         self.query_input.setPlaceholderText("运行号、产品或版本")
         self.operator_input = QLineEdit()
@@ -124,7 +132,6 @@ class ProductionRunManagementWidget(QWidget):
         self.date_range = DateRangeFilter(clock=self._clock, default_days=7)
         self.started_from_input = self.date_range.started_from_input
         self.started_to_input = self.date_range.started_to_input
-        filter_layout.addWidget(self.date_range)
         layout.addWidget(filter_card)
 
         self.start_button = QPushButton("转到扫码开始")
@@ -138,6 +145,13 @@ class ProductionRunManagementWidget(QWidget):
         self.interrupt_button = QPushButton("中断运行")
         self.interrupt_button.setProperty("actionRole", "danger")
         self.refresh_button = QPushButton("刷新")
+        toolbar = QHBoxLayout()
+        toolbar.addWidget(self.date_range)
+        toolbar.addStretch(1)
+        toolbar.addWidget(self.start_button)
+        toolbar.addWidget(self.resume_button)
+        toolbar.addWidget(self.refresh_button)
+        filter_layout.addLayout(toolbar)
 
         splitter = QSplitter()
         self.splitter = splitter
@@ -170,14 +184,28 @@ class ProductionRunManagementWidget(QWidget):
             stretch=(1,),
             compact=(2, 3, 4),
         )
-        enable_table_layout(self.run_table, "runs/list", self._layout_store)
+        enable_table_layout(
+            self.run_table,
+            "runs/list",
+            self._layout_store,
+            narrow_hidden=(2, 4),
+            narrow_threshold=620,
+        )
         run_list_layout.addWidget(self.run_table, 1)
         splitter.addWidget(run_list_card)
         right = QFrame()
         right.setObjectName("runSummaryCard")
+        right.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(8, 8, 8, 8)
+        right_layout.setSpacing(5)
         self.run_summary_title = QLabel("请选择生产运行")
-        self.run_summary_title.setObjectName("productSummary")
+        self.run_summary_title.setObjectName("detailTitle")
+        self.run_summary_title.setWordWrap(False)
+        self.run_summary_title.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
         right_layout.addWidget(self.run_summary_title)
         chips = QHBoxLayout()
         self.run_status_chip = QLabel("状态 -")
@@ -197,8 +225,29 @@ class ProductionRunManagementWidget(QWidget):
         right_layout.addLayout(chips)
         self.snapshot_label = QLabel("请选择生产运行")
         self.snapshot_label.setWordWrap(True)
-        right_layout.addWidget(self.snapshot_label)
+        self.snapshot_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Minimum,
+        )
+        self.snapshot_scroll = QScrollArea()
+        self.snapshot_scroll.setWidgetResizable(True)
+        self.snapshot_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.snapshot_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.snapshot_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.snapshot_scroll.setMinimumHeight(58)
+        self.snapshot_scroll.setMaximumHeight(82)
+        self.snapshot_scroll.setWidget(self.snapshot_label)
+        right_layout.addWidget(self.snapshot_scroll)
         self.detail_tabs = QTabWidget()
+        self.detail_tabs.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Expanding,
+        )
+        self.detail_tabs.setMinimumHeight(110)
         self.station_table = QTableWidget(0, 5)
         self.station_table.setHorizontalHeaderLabels(
             ("设备", "站位", "要求物料", "状态", "完成时间")
@@ -246,11 +295,10 @@ class ProductionRunManagementWidget(QWidget):
         attempts_layout.addWidget(self.attempt_table, 1)
         self.detail_tabs.addTab(attempts_page, "扫码记录")
         right_layout.addWidget(self.detail_tabs, 1)
-        reason_row = QHBoxLayout()
-        reason_row.addWidget(QLabel("中断原因"))
-        reason_row.addWidget(self.interruption_reason_input, 1)
-        right_layout.addLayout(reason_row)
         detail_actions = QHBoxLayout()
+        detail_actions.setSpacing(6)
+        detail_actions.addWidget(QLabel("中断原因"))
+        detail_actions.addWidget(self.interruption_reason_input, 1)
         detail_actions.addWidget(self.view_records_button)
         detail_actions.addWidget(self.export_button)
         detail_actions.addWidget(self.interrupt_button)
@@ -260,15 +308,15 @@ class ProductionRunManagementWidget(QWidget):
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 6)
         splitter.setSizes((720, 1080))
-        enable_splitter_layout(splitter, "runs/main", self._layout_store)
+        enable_splitter_layout(
+            splitter,
+            "runs/main",
+            self._layout_store,
+            narrow_ratios=(1, 1),
+            narrow_threshold=1500,
+        )
         layout.addWidget(splitter, 1)
 
-        actions = QHBoxLayout()
-        actions.addWidget(self.start_button)
-        actions.addWidget(self.resume_button)
-        actions.addWidget(self.refresh_button)
-        actions.addStretch(1)
-        layout.addLayout(actions)
         self.status_label = QLabel("就绪")
         set_feedback(self.status_label, "neutral", "就绪")
         layout.addWidget(self.status_label)
@@ -302,7 +350,7 @@ class ProductionRunManagementWidget(QWidget):
                 run.run_id,
                 f"{run.configuration.product_code}/{run.configuration.version}",
                 run.operator,
-                run.status.value,
+                RUN_STATUS_TEXT[run.status],
                 f"{run.completed_stations}/{run.total_stations}",
                 display_datetime(run.started_at),
             )
@@ -342,24 +390,27 @@ class ProductionRunManagementWidget(QWidget):
         if run is None:
             return
         self.run_summary_title.setText(run.run_id)
-        status_text, status_style = {
-            RunStatus.RUNNING: ("运行中", "background: #ecfdf3; color: #067647;"),
-            RunStatus.COMPLETED: ("已完成", "background: #eff8ff; color: #175cd3;"),
-            RunStatus.INTERRUPTED: ("已中断", "background: #fef3f2; color: #d92d20;"),
+        status_text = RUN_STATUS_TEXT[run.status]
+        status_style = {
+            RunStatus.RUNNING: "background: #ecfdf3; color: #067647;",
+            RunStatus.COMPLETED: "background: #eff8ff; color: #175cd3;",
+            RunStatus.INTERRUPTED: "background: #fef3f2; color: #d92d20;",
         }[run.status]
         self.run_status_chip.setText(status_text)
         self.run_status_chip.setStyleSheet(status_style)
         self.run_progress_chip.setText(
             f"{run.completed_stations} / {run.total_stations}"
         )
-        self.snapshot_label.setText(
-            f"配置快照：{run.configuration.product_code}/{run.configuration.version}\n"
-            f"BOM 版本 ID：{run.configuration.bom_version_id or '-'}\n"
-            f"启动操作员：{run.operator} | 状态：{run.status.value}\n"
-            f"开始时间：{display_datetime(run.started_at)}\n"
+        snapshot = (
+            f"配置：{run.configuration.product_code}/{run.configuration.version} | "
+            f"BOM：{run.configuration.bom_version_id or '-'}\n"
+            f"操作员：{run.operator} | 状态：{status_text}\n"
+            f"开始：{display_datetime(run.started_at)} | "
             f"结束/中断：{display_datetime(run.completed_at or run.interrupted_at) or '-'}\n"
             f"中断原因：{run.interruption_reason or '-'}"
         )
+        self.snapshot_label.setText(snapshot)
+        self.snapshot_label.setToolTip(snapshot)
         states = self._repository.list_station_states(run.run_id)
         self.station_table.setRowCount(len(states))
         for row, state in enumerate(states):

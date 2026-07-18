@@ -1,7 +1,14 @@
 """Application-wide operator sign-in control."""
 
 from PySide6.QtCore import Signal, Slot
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QWidget
+from PySide6.QtWidgets import (
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.operator import OperatorSession
@@ -23,12 +30,13 @@ class OperatorSessionWidget(QWidget):
         self.setObjectName("operatorBar")
         self._session = session
         self._announcer = announcer or SilentAnnouncementSink()
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 8, 6, 8)
+        layout.setSpacing(5)
         self.prompt_label = QLabel("当前操作员")
         self.operator_input = QLineEdit(session.operator)
         self.operator_input.setPlaceholderText("请输入工号或姓名")
-        self.operator_input.setMaximumWidth(560)
         self.sign_in_button = QPushButton("确认操作员")
         self.sign_in_button.setProperty("actionRole", "primary")
         self.current_label = QLabel(self._label_text())
@@ -37,10 +45,10 @@ class OperatorSessionWidget(QWidget):
         self.switch_button = QPushButton("切换")
         self.switch_button.setToolTip("切换操作员会中断当前未完成的生产运行")
         layout.addWidget(self.prompt_label)
-        layout.addWidget(self.operator_input, 1)
+        self.current_label.setWordWrap(True)
+        layout.addWidget(self.operator_input)
         layout.addWidget(self.sign_in_button)
         layout.addWidget(self.current_label)
-        layout.addStretch(1)
         layout.addWidget(self.status_label)
         layout.addWidget(self.switch_button)
         self.sign_in_button.clicked.connect(self._sign_in)

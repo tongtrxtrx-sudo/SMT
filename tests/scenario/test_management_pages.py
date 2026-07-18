@@ -26,7 +26,7 @@ from smt_guard.sqlite import (
 from smt_guard.ui.audits import AuditLogWidget
 from smt_guard.ui.boms import BomManagementWidget
 from smt_guard.ui.configurations import ConfigurationManagementWidget
-from smt_guard.ui.runs import ProductionRunManagementWidget
+from smt_guard.ui.runs import RUN_STATUS_TEXT, ProductionRunManagementWidget
 from smt_guard.ui.scanning import ScanWidget
 
 
@@ -55,6 +55,16 @@ class ManagementPageTests(unittest.TestCase):
             cls.app = application
         else:
             raise RuntimeError("A non-GUI Qt application already exists")
+
+    def test_run_statuses_have_chinese_display_text(self) -> None:
+        self.assertEqual(
+            {
+                RunStatus.RUNNING: "运行中",
+                RunStatus.COMPLETED: "已完成",
+                RunStatus.INTERRUPTED: "已中断",
+            },
+            RUN_STATUS_TEXT,
+        )
 
     def setUp(self) -> None:
         temporary = TemporaryDirectory()
@@ -129,6 +139,11 @@ class ManagementPageTests(unittest.TestCase):
         self.assertIn("by OP-UI", widget.detail_label.text())
         self.assertEqual(5, widget.version_table.columnCount())
         self.assertEqual("物料数", widget.version_table.horizontalHeaderItem(3).text())  # type: ignore[union-attr]
+        self.assertFalse(widget.version_table.isColumnHidden(0))
+        self.assertFalse(widget.version_table.isColumnHidden(1))
+        self.assertTrue(widget.version_table.isColumnHidden(2))
+        self.assertFalse(widget.version_table.isColumnHidden(3))
+        self.assertTrue(widget.version_table.isColumnHidden(4))
         self.assertGreaterEqual(widget.version_table.columnWidth(1), 150)
         self.assertEqual(
             0,
@@ -213,6 +228,9 @@ class ManagementPageTests(unittest.TestCase):
             bom_repository=boms,
         )
         self.addCleanup(widget.close)
+        widget.resize(1180, 700)
+        widget.show()
+        self.app.processEvents()
         filter_card = widget.filter_input.parentWidget()
         assert filter_card is not None
         self.assertEqual(760, filter_card.minimumWidth())
@@ -220,11 +238,16 @@ class ManagementPageTests(unittest.TestCase):
         version_item = widget.configuration_table.item(0, 3)
         assert version_item is not None
         self.assertEqual(version_item.text(), version_item.toolTip())
-        self.assertGreaterEqual(widget.configuration_table.columnWidth(2), 100)
         self.assertEqual("Board", widget.configuration_table.item(0, 1).text())  # type: ignore[union-attr]
         self.assertEqual("Main", widget.configuration_table.item(0, 2).text())  # type: ignore[union-attr]
         self.assertEqual("启用", widget.configuration_table.item(0, 4).text())  # type: ignore[union-attr]
         self.assertEqual("BOM-V1", widget.configuration_table.item(0, 5).text())  # type: ignore[union-attr]
+        self.assertFalse(widget.configuration_table.isColumnHidden(0))
+        self.assertTrue(widget.configuration_table.isColumnHidden(1))
+        self.assertTrue(widget.configuration_table.isColumnHidden(2))
+        self.assertFalse(widget.configuration_table.isColumnHidden(3))
+        self.assertFalse(widget.configuration_table.isColumnHidden(4))
+        self.assertFalse(widget.configuration_table.isColumnHidden(5))
         self.assertEqual("复制为草稿并编辑", widget.copy_button.text())
         self.assertEqual("保存修改", widget.save_draft_button.text())
         self.assertFalse(widget.add_row_button.isEnabled())
@@ -299,7 +322,30 @@ class ManagementPageTests(unittest.TestCase):
         self.assertEqual("产品 / 版本", product_version_header.text())
         self.assertEqual("查询运行", run_widget.query_button.text())
         self.assertLess(run_widget.query_button.x(), int(run_widget.width() * 0.75))
-        self.assertGreaterEqual(run_widget.run_table.columnWidth(0), 160)
+        self.assertGreaterEqual(
+            run_widget.run_table.columnWidth(0),
+            160,
+            msg=(
+                f"splitter={run_widget.splitter.sizes()} "
+                f"table={run_widget.run_table.width()} "
+                f"viewport={run_widget.run_table.viewport().width()} "
+                f"columns={[run_widget.run_table.columnWidth(i) for i in range(6)]}"
+            ),
+        )
+        self.assertTrue(
+            run_widget.run_table.isColumnHidden(2),
+            msg=(
+                f"splitter={run_widget.splitter.sizes()} "
+                f"table={run_widget.run_table.width()} "
+                f"viewport={run_widget.run_table.viewport().width()}"
+            ),
+        )
+        self.assertTrue(run_widget.run_table.isColumnHidden(4))
+        self.assertAlmostEqual(
+            run_widget.splitter.sizes()[0],
+            run_widget.splitter.sizes()[1],
+            delta=30,
+        )
         self.assertEqual(0, run_widget.run_table.horizontalScrollBar().maximum())
         self.assertEqual(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded,
@@ -317,7 +363,11 @@ class ManagementPageTests(unittest.TestCase):
             run_widget.station_table.horizontalScrollBarPolicy(),
         )
         self.assertEqual(0, run_widget.station_table.horizontalScrollBar().maximum())
+        status_item = run_widget.run_table.item(0, 3)
+        assert status_item is not None
+        self.assertEqual("已中断", status_item.text())
         self.assertIn("OP-UI", run_widget.snapshot_label.text())
+        self.assertIn("状态：已中断", run_widget.snapshot_label.text())
         self.assertEqual("RUN-UI", run_widget.run_summary_title.text())
         self.assertEqual("已中断", run_widget.run_status_chip.text())
         self.assertEqual("0 / 1", run_widget.run_progress_chip.text())

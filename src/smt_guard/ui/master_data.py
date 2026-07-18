@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QComboBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -339,13 +340,18 @@ class DeviceStationWidget(QWidget):
         layout.addWidget(self.station_table, 1)
 
         layout.addWidget(section_heading("站位信息", "新增或修改当前设备下的单个站位"))
-        single_form = QFormLayout()
+        single_form = QGridLayout()
+        single_form.setContentsMargins(0, 0, 0, 0)
         self.station_code_input = QLineEdit()
         self.station_name_input = QLineEdit()
         self.add_station_button = QPushButton("新增站位")
         self.add_station_button.setProperty("actionRole", "primary")
-        single_form.addRow("站位编码", self.station_code_input)
-        single_form.addRow("站位名称", self.station_name_input)
+        single_form.addWidget(QLabel("站位编码"), 0, 0)
+        single_form.addWidget(self.station_code_input, 0, 1)
+        single_form.addWidget(QLabel("站位名称"), 0, 2)
+        single_form.addWidget(self.station_name_input, 0, 3)
+        single_form.setColumnStretch(1, 1)
+        single_form.setColumnStretch(3, 1)
         layout.addLayout(single_form)
 
         station_buttons = QHBoxLayout()
@@ -368,18 +374,27 @@ class DeviceStationWidget(QWidget):
         layout.addWidget(self.bulk_toggle_button)
         self.bulk_group = QGroupBox("批量创建站位")
         self.bulk_group.setVisible(False)
-        bulk_form = QFormLayout(self.bulk_group)
+        bulk_form = QGridLayout(self.bulk_group)
+        bulk_form.setHorizontalSpacing(8)
+        bulk_form.setVerticalSpacing(6)
         self.bulk_prefix_input = QLineEdit("F-")
         self.bulk_start_input = self._spin_box(1, 9999, 1, minimum_digits=2)
         self.bulk_end_input = self._spin_box(1, 9999, 60)
         self.bulk_width_input = self._spin_box(1, 6, 2)
         self.bulk_add_button = QPushButton("批量创建")
         self.bulk_add_button.setProperty("actionRole", "primary")
-        bulk_form.addRow("前缀", self.bulk_prefix_input)
-        bulk_form.addRow("起始编号", self.bulk_start_input)
-        bulk_form.addRow("结束编号", self.bulk_end_input)
-        bulk_form.addRow("数字宽度", self.bulk_width_input)
-        bulk_form.addRow("", self.bulk_add_button)
+        bulk_form.addWidget(QLabel("前缀"), 0, 0)
+        bulk_form.addWidget(self.bulk_prefix_input, 0, 1)
+        bulk_form.addWidget(QLabel("数字宽度"), 0, 2)
+        bulk_form.addWidget(self.bulk_width_input, 0, 3)
+        bulk_form.addWidget(QLabel("起始编号"), 1, 0)
+        bulk_form.addWidget(self.bulk_start_input, 1, 1)
+        bulk_form.addWidget(QLabel("结束编号"), 1, 2)
+        bulk_form.addWidget(self.bulk_end_input, 1, 3)
+        self.bulk_add_button.setMinimumWidth(105)
+        bulk_form.addWidget(self.bulk_add_button, 0, 4, 2, 1)
+        bulk_form.setColumnStretch(1, 1)
+        bulk_form.setColumnStretch(3, 1)
         layout.addWidget(self.bulk_group)
         return panel
 
@@ -815,5 +830,5 @@ class DeviceStationWidget(QWidget):
         spin_box.setRange(minimum, maximum)
         spin_box.setValue(value)
         spin_box.setAccelerated(True)
-        spin_box.setMinimumHeight(42)
+        spin_box.setMinimumHeight(38)
         return spin_box

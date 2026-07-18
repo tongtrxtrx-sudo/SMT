@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from openpyxl import Workbook
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel, QTableWidget
 
 from smt_guard.app import ApplicationRuntime, create_runtime
 from smt_guard.feedback import FeedbackTone, VoicePrompt
@@ -146,7 +146,125 @@ class ApplicationCompositionTests(unittest.TestCase):
         self.assertTrue(self.runtime.window.navigation_buttons[0].isChecked())
         self.assertEqual(180, self.runtime.window.side_navigation.width())
         self.assertIn("数据库正常", self.runtime.window.diagnostic_label.text())
+        self.assertEqual("恢复默认布局", self.runtime.window.reset_layout_button.text())
         self.assertEqual("SMT 扫码防错", self.runtime.window.windowTitle())
+        operator_control = self.runtime.window.findChild(OperatorSessionWidget)
+        if operator_control is None:
+            self.fail("Missing operator session control")
+        self.assertIs(
+            self.runtime.window.side_navigation,
+            operator_control.parentWidget(),
+        )
+
+    def test_navigation_uses_less_space_on_a_laptop_width(self) -> None:
+        self.runtime.window.resize(1440, 850)
+        self.runtime.window.show()
+        self.app.processEvents()
+        self.assertEqual(160, self.runtime.window.side_navigation.width())
+        self.assertEqual(850, self.runtime.window.height())
+        self.assertGreaterEqual(self.runtime.window.page_stack.height(), 760)
+        brand = self.runtime.window.findChild(QLabel, "navBrand")
+        if brand is None:
+            self.fail("Missing navigation brand")
+        self.assertGreaterEqual(
+            brand.contentsRect().width(),
+            brand.fontMetrics().horizontalAdvance(brand.text()),
+        )
+        operator_control = self.runtime.window.findChild(OperatorSessionWidget)
+        if operator_control is None:
+            self.fail("Missing operator session control")
+        visible_navigation_bottom = max(
+            button.geometry().bottom()
+            for button in self.runtime.window.navigation_buttons
+            if not button.isHidden()
+        )
+        self.assertGreater(operator_control.geometry().top(), visible_navigation_bottom)
+
+        self.runtime.scan_widget.history_button.setChecked(True)
+        self.app.processEvents()
+        self.assertGreaterEqual(
+            self.runtime.scan_widget.attempt_table.viewport().height(),
+            108,
+        )
+
+        self.runtime.window.resize(1700, 900)
+        self.app.processEvents()
+        self.assertEqual(180, self.runtime.window.side_navigation.width())
+
+    def test_populated_run_page_can_fit_a_laptop_height(self) -> None:
+        self.runtime.master_data.add_device("SMT02", "贴片机", "SMT-1线", actor="111")
+        self.runtime.master_data.add_station("SMT02", "A-1", actor="111")
+        configuration = ProductConfiguration(
+            "501000009",
+            "0001",
+            {("SMT02", "A-1"): "005000108"},
+        )
+        self.runtime.configurations.save(configuration, actor="111")
+        self.runtime.runs.start(
+            "RUN-20260718-053812-E27D35C8",
+            configuration,
+            operator="111",
+            started_at=datetime(2026, 7, 18, 5, 38, tzinfo=UTC),
+        )
+        run_widget = self.runtime.window.page_stack.widget(
+            self.runtime.window.RUNS_TAB
+        )
+        assert isinstance(run_widget, ProductionRunManagementWidget)
+        run_widget.refresh()
+        run_widget.snapshot_label.setText(
+            "配置快照：501000009/0001\n"
+            "BOM 版本 ID：4\n"
+            "启动操作员：111 | 状态：RUNNING\n"
+            "开始时间：2026-07-18 05:38\n"
+            "结束/中断：-\n"
+            "中断原因：-"
+        )
+        self.runtime.window.page_stack.setCurrentIndex(self.runtime.window.RUNS_TAB)
+
+        self.runtime.window.resize(1366, 800)
+        self.runtime.window.show()
+        self.app.processEvents()
+
+        visible_width = sum(
+            run_widget.run_table.columnWidth(column)
+            for column in range(run_widget.run_table.columnCount())
+            if not run_widget.run_table.isColumnHidden(column)
+        )
+        self.assertEqual(800, self.runtime.window.height())
+        self.assertGreaterEqual(
+            visible_width,
+            run_widget.run_table.viewport().width() - 8,
+        )
+        self.assertGreaterEqual(run_widget.station_table.viewport().height(), 72)
+
+    def test_table_heavy_pages_show_at_least_three_rows_at_laptop_height(self) -> None:
+        self.runtime.window.resize(1440, 850)
+        self.runtime.window.show()
+
+        for page_index in (
+            self.runtime.window.RUNS_TAB,
+            self.runtime.window.MASTER_DATA_TAB,
+            self.runtime.window.BOMS_TAB,
+            self.runtime.window.CONFIGURATIONS_TAB,
+        ):
+            with self.subTest(page_index=page_index):
+                self.runtime.window.page_stack.setCurrentIndex(page_index)
+                self.app.processEvents()
+                page = self.runtime.window.page_stack.widget(page_index)
+                assert page is not None
+                visible_tables = [
+                    table
+                    for table in page.findChildren(QTableWidget)
+                    if table.isVisible()
+                ]
+                self.assertTrue(visible_tables)
+                self.assertTrue(
+                    all(table.viewport().height() >= 108 for table in visible_tables),
+                    msg=[
+                        (table.height(), table.viewport().height())
+                        for table in visible_tables
+                    ],
+                )
 
     def test_empty_scan_state_opens_guided_import_page(self) -> None:
         self.assertEqual(
@@ -394,6 +512,35 @@ class ApplicationCompositionTests(unittest.TestCase):
         configuration_widget.activate_button.click()
         configuration_widget.disable_button.click()
         self.assertIn("已停用", configuration_widget.status_label.text())
+
+        self.runtime.window.resize(1366, 800)
+        self.runtime.window.show()
+        self.runtime.window.page_stack.setCurrentIndex(self.runtime.window.SCAN_TAB)
+        self.app.processEvents()
+        self.assertLess(
+            self.runtime.scan_widget.hero_card.geometry().bottom(),
+            self.runtime.scan_widget.input_card.geometry().top(),
+        )
+
+        self.runtime.window.page_stack.setCurrentIndex(self.runtime.window.MASTER_DATA_TAB)
+        master_widget.bulk_toggle_button.setChecked(True)
+        self.app.processEvents()
+        self.assertGreaterEqual(
+            master_widget.bulk_group.height(),
+            master_widget.bulk_group.minimumSizeHint().height(),
+        )
+
+        self.runtime.window.page_stack.setCurrentIndex(self.runtime.window.BOMS_TAB)
+        self.app.processEvents()
+        self.assertGreaterEqual(bom_widget.material_table.viewport().height(), 72)
+
+        self.runtime.window.page_stack.setCurrentIndex(
+            self.runtime.window.CONFIGURATIONS_TAB
+        )
+        self.app.processEvents()
+        self.assertGreaterEqual(
+            configuration_widget.assignment_table.viewport().height(), 72
+        )
 
         audit_widget = self.runtime.window.tab_widget.widget(self.runtime.window.AUDITS_TAB)
         if not isinstance(audit_widget, AuditLogWidget):

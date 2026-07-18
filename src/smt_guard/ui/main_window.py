@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import QDateTime, QTimer, Slot
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette, QResizeEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QTableWidget,
     QVBoxLayout,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from smt_guard.ui.operator import OperatorSessionWidget
 from smt_guard.ui.scanning import ScanWidget
+from smt_guard.ui.tables import UiLayoutStore, reset_persistent_layouts
 
 APPLICATION_STYLE = """
 QWidget {
@@ -165,13 +167,13 @@ QFrame#sideNavigation {
     border-right: 1px solid #dbe4f0;
 }
 QLabel#navBrand {
-    font-size: 21px;
+    font-size: 19px;
     font-weight: 700;
     color: #102a56;
     background-color: #ffffff;
     border: 1px solid #e4eaf1;
     border-radius: 10px;
-    padding: 13px 10px;
+    padding: 11px 6px;
 }
 QLabel#navSection {
     color: #667085;
@@ -201,9 +203,10 @@ QPushButton[navItem="true"]:checked {
     border-left: 4px solid #2e90fa;
     font-weight: 700;
 }
-QFrame#operatorBar {
+QWidget#operatorBar {
     background-color: #ffffff;
-    border-bottom: 1px solid #dbe4f0;
+    border: 1px solid #dbe4f0;
+    border-radius: 8px;
 }
 QLabel#currentOperator {
     color: #344054;
@@ -255,14 +258,19 @@ QLabel#productSummary {
     font-size: 25px;
     font-weight: 700;
 }
+QLabel#detailTitle {
+    font-size: 19px;
+    font-weight: 700;
+    color: #102a56;
+}
 QLabel#progressCount {
     font-size: 26px;
     font-weight: 700;
 }
 QLabel[summaryChip="true"] {
     border-radius: 7px;
-    padding: 12px 16px;
-    font-size: 17px;
+    padding: 8px 12px;
+    font-size: 16px;
     font-weight: 600;
 }
 QLabel#pageTitle {
@@ -403,10 +411,13 @@ class MainWindow(QMainWindow):
         records_widget: QWidget,
         audit_widget: QWidget,
         operator_widget: OperatorSessionWidget,
+        *,
+        layout_store: UiLayoutStore | None = None,
     ) -> None:
         super().__init__()
         register_windows_fonts()
         self._scan_widget = scan_widget
+        self._layout_store = layout_store
         self.setWindowTitle("SMT 扫码防错")
         self.resize(1180, 760)
         font = QFont()
@@ -418,7 +429,6 @@ class MainWindow(QMainWindow):
         central = QWidget()
         central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(0, 0, 0, 0)
-        central_layout.addWidget(operator_widget)
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -427,10 +437,11 @@ class MainWindow(QMainWindow):
         self.side_navigation.setObjectName("sideNavigation")
         self.side_navigation.setFixedWidth(180)
         navigation_layout = QVBoxLayout(self.side_navigation)
-        navigation_layout.setContentsMargins(12, 12, 12, 12)
+        navigation_layout.setContentsMargins(8, 12, 8, 12)
         navigation_layout.setSpacing(3)
         brand = QLabel("SMT Guard")
         brand.setObjectName("navBrand")
+        self.brand_label = brand
         navigation_layout.addWidget(brand)
 
         self.navigation_group = QButtonGroup(self)
@@ -465,6 +476,8 @@ class MainWindow(QMainWindow):
                 # operator-facing entry point for scan records.
                 button.setHidden(True)
         navigation_layout.addStretch(1)
+        self.operator_widget = operator_widget
+        navigation_layout.addWidget(operator_widget)
         body.addWidget(self.side_navigation)
 
         content = QWidget()
@@ -472,6 +485,10 @@ class MainWindow(QMainWindow):
         content_layout.setContentsMargins(14, 10, 14, 10)
         content_layout.setSpacing(8)
         self.page_stack = QStackedWidget()
+        self.page_stack.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Ignored,
+        )
         # Keep the historical attribute as a compatibility alias for workflow wiring.
         self.tab_widget = self.page_stack
         pages = (
@@ -497,7 +514,11 @@ class MainWindow(QMainWindow):
         diagnostic_layout.setContentsMargins(0, 0, 0, 0)
         self.diagnostic_label = QLabel()
         self.diagnostic_label.setObjectName("diagnosticText")
-        diagnostic_layout.addWidget(self.diagnostic_label)
+        diagnostic_layout.addWidget(self.diagnostic_label, 1)
+        self.reset_layout_button = QPushButton("恢复默认布局")
+        self.reset_layout_button.setToolTip("清除已保存的列宽、列顺序和左右分栏比例")
+        self.reset_layout_button.clicked.connect(self._reset_layouts)
+        diagnostic_layout.addWidget(self.reset_layout_button)
         content_layout.addWidget(self.diagnostic_frame)
         body.addWidget(content, 1)
         central_layout.addLayout(body, 1)
@@ -526,6 +547,16 @@ class MainWindow(QMainWindow):
             viewport.setBackgroundRole(QPalette.ColorRole.Base)
             viewport.setStyleSheet("background-color: #ffffff; color: #1d2939;")
             viewport.setAutoFillBackground(True)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        if hasattr(self, "side_navigation"):
+            self.side_navigation.setFixedWidth(160 if event.size().width() < 1500 else 180)
+        super().resizeEvent(event)
+
+    @Slot()
+    def _reset_layouts(self) -> None:
+        reset_persistent_layouts(self, self._layout_store)
+        self.diagnostic_label.setText("● 已恢复当前屏幕的默认表格与分栏布局")
 
     @Slot(int)
     def _tab_changed(self, index: int) -> None:

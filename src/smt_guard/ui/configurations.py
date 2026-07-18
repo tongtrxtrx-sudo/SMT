@@ -112,10 +112,8 @@ class ConfigurationManagementWidget(QWidget):
         filter_card.setMinimumWidth(760)
         filter_card.setMaximumWidth(980)
         filter_layout = QVBoxLayout(filter_card)
-        filter_layout.addWidget(
-            section_heading("筛选配置", "按产品编码、名称、规格或版本定位")
-        )
         top = QHBoxLayout()
+        top.addWidget(section_heading("筛选配置"))
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText("按产品编码、名称、规格或版本筛选")
         self.filter_input.setClearButtonEnabled(True)
@@ -159,15 +157,21 @@ class ConfigurationManagementWidget(QWidget):
             self.configuration_table,
             "configurations/list",
             self._layout_store,
+            narrow_hidden=(1, 2),
+            narrow_threshold=620,
         )
         list_layout.addWidget(self.configuration_table, 1)
         splitter.addWidget(list_card)
         editor = content_card(object_name="detailCard")
         editor_layout = QVBoxLayout(editor)
+        editor_layout.setContentsMargins(8, 8, 8, 8)
+        editor_layout.setSpacing(5)
+        editor_header = QHBoxLayout()
         self.editor_label = QLabel("请选择配置")
-        self.editor_label.setObjectName("sectionTitle")
+        self.editor_label.setObjectName("detailTitle")
         self.editor_label.setWordWrap(True)
-        editor_layout.addWidget(self.editor_label)
+        self.editor_label.setMaximumHeight(74)
+        editor_header.addWidget(self.editor_label, 1)
         summary = QHBoxLayout()
         self.configuration_status_chip = QLabel("未选择")
         self.assignment_count_chip = QLabel("站位 0")
@@ -176,10 +180,11 @@ class ConfigurationManagementWidget(QWidget):
         self.configuration_status_chip.setProperty("metricTone", "primary")
         summary.addWidget(self.configuration_status_chip)
         summary.addWidget(self.assignment_count_chip)
-        summary.addStretch(1)
-        editor_layout.addLayout(summary)
+        editor_header.addLayout(summary)
+        editor_layout.addLayout(editor_header)
         self.edit_hint_label = QLabel("请选择配置")
         self.edit_hint_label.setWordWrap(True)
+        self.edit_hint_label.setMaximumHeight(42)
         set_feedback(self.edit_hint_label, "neutral", "请选择配置")
         editor_layout.addWidget(self.edit_hint_label)
         self.import_button = QPushButton("前往导入配置")
@@ -201,6 +206,7 @@ class ConfigurationManagementWidget(QWidget):
             "configurations/assignments",
             self._layout_store,
         )
+        self.assignment_table.setMinimumHeight(72)
         editor_layout.addWidget(self.assignment_table, 1)
         row_actions = QHBoxLayout()
         self.add_row_button = QPushButton("新增行")
@@ -210,18 +216,15 @@ class ConfigurationManagementWidget(QWidget):
         row_actions.addWidget(self.add_row_button)
         row_actions.addWidget(self.remove_row_button)
         row_actions.addWidget(self.save_draft_button)
-        editor_layout.addLayout(row_actions)
-        lifecycle_actions = QHBoxLayout()
         self.validate_button = QPushButton("校验")
         self.activate_button = QPushButton("启用")
         self.activate_button.setProperty("actionRole", "success")
         self.disable_button = QPushButton("停用")
         self.disable_button.setProperty("actionRole", "danger")
-        lifecycle_actions.addWidget(self.validate_button)
-        lifecycle_actions.addWidget(self.activate_button)
-        lifecycle_actions.addWidget(self.disable_button)
-        lifecycle_actions.addStretch(1)
-        editor_layout.addLayout(lifecycle_actions)
+        row_actions.addWidget(self.validate_button)
+        row_actions.addWidget(self.activate_button)
+        row_actions.addWidget(self.disable_button)
+        editor_layout.addLayout(row_actions)
         splitter.addWidget(editor)
         splitter.setChildrenCollapsible(False)
         splitter.setStretchFactor(0, 4)
@@ -235,11 +238,9 @@ class ConfigurationManagementWidget(QWidget):
         layout.addWidget(splitter, 1)
 
         version_card = content_card(object_name="actionCard")
-        version_layout = QVBoxLayout(version_card)
-        version_layout.addWidget(
-            section_heading("复制为草稿并编辑", "已启用版本不能直接修改，请先复制草稿")
-        )
-        lifecycle = QHBoxLayout()
+        lifecycle = QHBoxLayout(version_card)
+        lifecycle.setContentsMargins(8, 8, 8, 8)
+        lifecycle.addWidget(section_heading("复制为草稿并编辑"))
         self.new_version_input = QLineEdit()
         self.new_version_input.setPlaceholderText("新版本号")
         self.new_version_input.setMaximumWidth(420)
@@ -248,7 +249,6 @@ class ConfigurationManagementWidget(QWidget):
         lifecycle.addWidget(self.new_version_input, 1)
         lifecycle.addWidget(self.copy_button)
         lifecycle.addStretch(1)
-        version_layout.addLayout(lifecycle)
         layout.addWidget(version_card)
         self.status_label = QLabel("就绪")
         set_feedback(self.status_label, "neutral", "就绪")
@@ -382,8 +382,7 @@ class ConfigurationManagementWidget(QWidget):
             set_feedback(
                 self.edit_hint_label,
                 "warning",
-                "当前为已启用或历史版本，为保证生产追溯不能直接修改。"
-                "请在下方填写新版本号，再点击“复制为草稿并编辑”。",
+                "已启用或历史版本不能直接修改；如需调整，请在下方复制为草稿。",
             )
 
     def _linked_bom(self, record: ProductConfigurationRecord) -> BomVersion | None:

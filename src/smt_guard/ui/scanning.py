@@ -180,7 +180,7 @@ class ScanWidget(QWidget):
         self.feedback_label = QLabel("请先开始运行")
         self.feedback_label.setObjectName("scanFeedback")
         self.feedback_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.feedback_label.setMinimumHeight(170)
+        self.feedback_label.setMinimumHeight(110)
         self.feedback_label.setMaximumHeight(310)
         self.feedback_label.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -211,18 +211,18 @@ class ScanWidget(QWidget):
 
         self.input_card = QFrame()
         self.input_card.setObjectName("scanInputCard")
-        self.input_card.setMinimumHeight(82)
+        self.input_card.setMinimumHeight(66)
         scan_row = QHBoxLayout()
         scan_row.setContentsMargins(12, 12, 12, 12)
         self.scan_input = QLineEdit()
         self.scan_input.setPlaceholderText("请在这里扫码；扫码枪发送 Enter 后自动提交")
-        self.scan_input.setMinimumHeight(56)
+        self.scan_input.setMinimumHeight(44)
         self.scan_input.setStyleSheet("font-size: 18px; padding: 0 14px;")
         self.scan_input.setEnabled(False)
         self.scan_input.installEventFilter(self)
         self.submit_button = QPushButton("手动提交")
         self.submit_button.setToolTip("仅用于键盘调试；扫码枪发送 Enter 时会自动提交")
-        self.submit_button.setMinimumHeight(56)
+        self.submit_button.setMinimumHeight(44)
         self.submit_button.setEnabled(False)
         scan_row.addWidget(self.scan_input, 1)
         scan_row.addWidget(self.submit_button)
@@ -286,6 +286,7 @@ class ScanWidget(QWidget):
             "scan/attempts",
             self._layout_store,
         )
+        self.attempt_table.setMinimumHeight(150)
         self.attempt_table.setVisible(False)
         history_layout.addWidget(self.attempt_table, 1)
         overview_layout.addWidget(self.history_card, 1)
@@ -322,6 +323,7 @@ class ScanWidget(QWidget):
     def _toggle_history(self, expanded: bool) -> None:
         self.attempt_table.setVisible(expanded)
         self.history_button.setText("收起" if expanded else "展开")
+        self.history_card.setMinimumHeight(220 if expanded else 0)
         self.history_card.setMaximumHeight(16777215 if expanded else 82)
 
     @Slot(bool)
@@ -341,9 +343,13 @@ class ScanWidget(QWidget):
         self.workflow_layout.setDirection(QBoxLayout.Direction.TopToBottom)
         self.workflow_layout.setStretch(0, 0)
         self.workflow_layout.setStretch(1, 1)
-        self.hero_card.setMinimumHeight(320 if wide else 220)
-        self.hero_card.setMaximumHeight(400 if wide else 290)
-        self.hero_column.setMaximumHeight(492 if wide else 382)
+        self.input_card.setMinimumHeight(82 if wide else 66)
+        self.scan_input.setMinimumHeight(56 if wide else 44)
+        self.submit_button.setMinimumHeight(56 if wide else 44)
+        self.feedback_label.setMinimumHeight(150 if wide else 110)
+        self.hero_card.setMinimumHeight(320 if wide else 170)
+        self.hero_card.setMaximumHeight(400 if wide else 220)
+        self.hero_column.setMaximumHeight(492 if wide else 298)
         self.progress_card.setMaximumHeight(72)
         if not self._history_user_overridden:
             self.history_button.setChecked(wide)
