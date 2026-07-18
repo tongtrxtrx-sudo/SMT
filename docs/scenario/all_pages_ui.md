@@ -20,6 +20,29 @@
 - Keep destructive or lifecycle actions visually separate from refresh, compare, and file-choice
   controls.
 
+## Full-Screen Responsive Rules
+
+- Start the packaged application maximized on dedicated shop-floor terminals.
+- Keep the scan task, input, progress, and history in one vertical reading order. At page widths of
+  1400 pixels or more, cap the task card at 400 pixels, keep progress to one 72-pixel row, and give
+  the recent-scan table the full available width and remaining height.
+- Below the full-screen breakpoint, shorten the task card and collapse history by default so the
+  same workflow remains usable in an 1180 x 760 window.
+- Keep the scanner input at least 56 pixels high so operators can identify its active state from a
+  normal standing distance.
+- Keep selection and filter inputs at readable maximum widths instead of stretching a single input
+  across the entire display.
+- Let high-value table columns share spare width. Keep status, counts, and other short values
+  compact, and do not allocate all spare width to the final column.
+- Allow BOM, configuration, run, device/station, and audit split views to expand their detail panes
+  on a wide display; do not cap detail panes at fixed narrow widths.
+- Center the import workflow and cap it at 1280 pixels so its three-step reading order remains clear
+  on a 1920-pixel display.
+- Use a light application canvas, white content cards, a small blue title accent, consistent 12-pixel
+  card corners, 36-pixel table rows, and alternating table surfaces across all eight pages.
+- Present success, neutral, and error feedback as full-width status strips instead of relying on text
+  color alone; retain blue, green, and red action semantics throughout management pages.
+
 ## Test Steps
 
 - Case 1 (record query): Show a compact scan-result table, total/NG/repeat chips, and a centered
@@ -28,12 +51,24 @@
   selected before/after JSON in a side detail card.
 - Case 3 (master data): Put device and station lists before editors, show record counts, and keep
   batch station creation collapsed until requested.
-- Case 4 (BOM and configuration): Keep lifecycle actions in the selected-item detail card, move
-  comparison/copy actions to secondary cards, and hide low-frequency columns.
+- Case 4 (BOM and configuration): Present BOMs as current/history versions with automatic switching
+  and no manual lifecycle buttons. Keep editable configuration lifecycle actions in the selected-item
+  detail card, move comparison/copy actions to secondary cards, and hide low-frequency columns.
 - Case 5 (runs and import): Use the shared header/card/table rules without disturbing the direct
   run-detail workflow or the three-step import guide.
 - Case 6 (real executable): At 1183 x 857, inspect every navigation destination and confirm that
   primary controls are visible, content is not clipped, and compact tables do not scroll sideways.
+- Case 7 (responsive sizes): Render all eight pages at 1920 x 1000 and 1180 x 760. Confirm that the
+  scan page gives records full width at both sizes, collapses them only in the medium window,
+  management details receive useful width, and no primary action overlaps or clips.
+- Case 8 (packaged maximized startup): Launch the isolated executable normally and verify that the
+  top-level window is maximized, can close normally, and leaves a valid SQLite database.
+- Case 9 (complete workflow): Run the repository-backed eight-page workflow described in
+  `full_workflow_ui_simulation.md`, including real Excel import, NG/OK scanning, two CSV exports,
+  lifecycle actions, audit lookup, and SQLite integrity validation.
+- Case 10 (single record entry): Hide the duplicate record-query navigation item while retaining its
+  composed page and repository-backed workflow for compatibility; expose routine scan-record review
+  and CSV export through Production Runs.
 
 ## Status
 

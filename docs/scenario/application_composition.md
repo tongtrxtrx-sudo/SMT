@@ -8,7 +8,8 @@
 
 - Case 1 (navigation): Compose the eight workflow screens under a persistent left navigation,
   grouped as work, configuration, and system pages, with scanning selected first.
-- Case 2 (operator): Collapse a confirmed operator to a read-only identity and switch action.
+- Case 2 (operator): Collapse a confirmed operator to a read-only identity and switch action; save
+  the confirmed value and restore it automatically after closing and reopening the runtime.
 - Case 3 (persistence): Store master data, close, reopen, and read it from the same database file.
 - Case 4 (page wiring): Refresh the scan configuration list after import completion.
 - Case 5 (run details): Open a run's scan records directly and export them without copying its ID.

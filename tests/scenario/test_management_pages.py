@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDateTimeEdit
 
-from smt_guard.bom import BomDocument, Material, Product
+from smt_guard.bom import BomDocument, BomVersion, Material, Product
 from smt_guard.feedback import FeedbackTone, VoicePrompt
 from smt_guard.operator import OperatorSession
 from smt_guard.run import RunStatus
@@ -70,29 +70,37 @@ class ManagementPageTests(unittest.TestCase):
         self.clock = lambda: datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
 
     @staticmethod
-    def document(material: str) -> BomDocument:
+    def document(*materials: str) -> BomDocument:
         return BomDocument(
             Product("501000087", "BOM", "Board BOM", "Board", "Main"),
-            {material: Material(material, "Part", "1206", "1", "Electronic")},
+            {
+                material: Material(material, "Part", "1206", "1", "Electronic")
+                for material in materials
+            },
         )
 
-    def import_bom(self, version: str, material: str) -> None:
+    def import_bom(
+        self, version: str, material: str, *additional_materials: str
+    ) -> BomVersion:
         source = self.directory / f"{version}.xlsx"
         source.write_bytes(version.encode())
-        SqliteBomRepository(self.connection).import_document(
-            self.document(material),
+        return SqliteBomRepository(self.connection).import_document(
+            self.document(material, *additional_materials),
             source,
             version=version,
             operator="OP-UI",
             imported_at=datetime(2026, 7, 14, 9, 0, tzinfo=UTC),
         )
 
-    def test_bom_page_shows_provenance_compares_and_runs_lifecycle(self) -> None:
+    def test_bom_page_shows_provenance_compares_and_marks_current_version(self) -> None:
         self.import_bom("V1", "M-1")
         self.import_bom("V2", "M-2")
+        repository = SqliteBomRepository(self.connection)
+        repository.publish("501000087", "V2", actor="OP-UI")
+        repository.activate("501000087", "V2", actor="OP-UI")
         announcer = FakeAnnouncementSink()
         widget = BomManagementWidget(
-            SqliteBomRepository(self.connection),
+            repository,
             self.session.require,
             announcer=announcer,
         )
@@ -103,13 +111,14 @@ class ManagementPageTests(unittest.TestCase):
 
         self.assertEqual(2, widget.version_table.rowCount())
         self.assertEqual(
-            {"停用"},
+            {"当前版本", "历史版本"},
             {widget.version_table.item(row, 2).text() for row in range(2)},  # type: ignore[union-attr]
         )
-        self.assertEqual("启用", widget.activate_button.text())
-        self.assertEqual("停用", widget.disable_button.text())
-        self.assertTrue(widget.activate_button.isEnabled())
-        self.assertFalse(widget.disable_button.isEnabled())
+        self.assertEqual(
+            "版本定位", widget.version_table.horizontalHeaderItem(2).text()  # type: ignore[union-attr]
+        )
+        self.assertFalse(hasattr(widget, "activate_button"))
+        self.assertFalse(hasattr(widget, "disable_button"))
         self.assertIn("SHA-256", widget.detail_label.text())
         self.assertIn("来源：", widget.detail_label.text())
         self.assertIn("by OP-UI", widget.detail_label.text())
@@ -136,47 +145,45 @@ class ManagementPageTests(unittest.TestCase):
         )
         widget.compare_button.click()
         self.assertIn("M-2", widget.compare_label.text())
-
-        widget.version_table.selectRow(0)
-        widget.activate_button.click()
-        self.assertFalse(widget.activate_button.isEnabled())
-        self.assertTrue(widget.disable_button.isEnabled())
-        widget.disable_button.click()
-        self.assertTrue(widget.activate_button.isEnabled())
-        self.assertFalse(widget.disable_button.isEnabled())
-        self.assertIn("已停用", widget.status_label.text())
-        self.assertEqual(
-            [
-                VoicePrompt.BOM_ACTIVATED,
-                VoicePrompt.BOM_DISABLED,
-            ],
-            announcer.prompts,
-        )
-        self.assertEqual("BOM 已停用", VoicePrompt.BOM_DISABLED.value)
-
-        prompts_before_disabled_click = list(announcer.prompts)
-        widget.disable_button.click()
-        self.assertIn("已停用", widget.status_label.text())
-        self.assertEqual(prompts_before_disabled_click, announcer.prompts)
+        widget.version_table.selectRow(1)
+        self.assertIn("当前 BOM 版本", widget.lifecycle_hint_label.text())
+        self.assertEqual([], announcer.prompts)
 
     def test_configuration_page_copies_edits_and_releases_new_version(self) -> None:
         repository = SqliteProductConfigurationRepository(self.connection)
+        boms = SqliteBomRepository(self.connection)
+        bom = self.import_bom("BOM-V1", "M-1", "M-2")
         repository.save(
-            ProductConfiguration("501000087", "V1", {("SMT-01", "F-01"): "M-1"}),
+            ProductConfiguration(
+                "501000087",
+                "V1",
+                {("SMT-01", "F-01"): "M-1"},
+                bom.id,
+            ),
             actor="OP-UI",
         )
         announcer = FakeAnnouncementSink()
         widget = ConfigurationManagementWidget(
-            repository, self.session.require, announcer=announcer
+            repository,
+            self.session.require,
+            announcer=announcer,
+            bom_repository=boms,
         )
         self.addCleanup(widget.close)
-        version_item = widget.configuration_table.item(0, 1)
+        version_item = widget.configuration_table.item(0, 3)
         assert version_item is not None
         self.assertEqual(version_item.text(), version_item.toolTip())
-        self.assertGreaterEqual(widget.configuration_table.columnWidth(1), 170)
-        self.assertEqual("启用", widget.configuration_table.item(0, 2).text())  # type: ignore[union-attr]
-        self.assertEqual("复制新版本", widget.copy_button.text())
+        self.assertGreaterEqual(widget.configuration_table.columnWidth(2), 100)
+        self.assertEqual("Board", widget.configuration_table.item(0, 1).text())  # type: ignore[union-attr]
+        self.assertEqual("Main", widget.configuration_table.item(0, 2).text())  # type: ignore[union-attr]
+        self.assertEqual("启用", widget.configuration_table.item(0, 4).text())  # type: ignore[union-attr]
+        self.assertEqual("BOM-V1", widget.configuration_table.item(0, 5).text())  # type: ignore[union-attr]
+        self.assertEqual("复制为草稿并编辑", widget.copy_button.text())
         self.assertEqual("保存修改", widget.save_draft_button.text())
+        self.assertFalse(widget.add_row_button.isEnabled())
+        self.assertFalse(widget.remove_row_button.isEnabled())
+        self.assertFalse(widget.save_draft_button.isEnabled())
+        self.assertIn("不能直接修改", widget.edit_hint_label.text())
         self.assertFalse(widget.activate_button.isEnabled())
         self.assertTrue(widget.disable_button.isEnabled())
         widget.new_version_input.setText("V2")
@@ -184,6 +191,10 @@ class ManagementPageTests(unittest.TestCase):
         self.assertEqual(2, widget.configuration_table.rowCount())
 
         widget.configuration_table.selectRow(1)
+        self.assertTrue(widget.add_row_button.isEnabled())
+        self.assertTrue(widget.remove_row_button.isEnabled())
+        self.assertTrue(widget.save_draft_button.isEnabled())
+        self.assertIn("当前为草稿", widget.edit_hint_label.text())
         self.assertTrue(widget.activate_button.isEnabled())
         self.assertFalse(widget.disable_button.isEnabled())
         widget.assignment_table.item(0, 2).setText("M-2")  # type: ignore[union-attr]
@@ -297,7 +308,10 @@ class ManagementPageTests(unittest.TestCase):
 
     def test_audit_page_distinguishes_unqueried_zero_and_refreshes_when_activated(self) -> None:
         repository = SqliteAuditRepository(self.connection)
-        widget = AuditLogWidget(repository, clock=self.clock)
+        widget = AuditLogWidget(
+            repository,
+            clock=lambda: datetime.now(UTC),
+        )
         self.addCleanup(widget.close)
         self.assertIn("尚未查询", widget.status_label.text())
 
@@ -410,14 +424,13 @@ class ManagementPageTests(unittest.TestCase):
             announcer=announcer,
         )
         self.addCleanup(bom_widget.close)
-        self.assertFalse(bom_widget.activate_button.isEnabled())
-        self.assertFalse(bom_widget.disable_button.isEnabled())
+        self.assertFalse(hasattr(bom_widget, "activate_button"))
+        self.assertFalse(hasattr(bom_widget, "disable_button"))
         bom_import_requests: list[bool] = []
         bom_widget.import_requested.connect(lambda: bom_import_requests.append(True))
         self.assertFalse(bom_widget.import_button.isHidden())
         bom_widget.import_button.click()
         self.assertEqual([True], bom_import_requests)
-        bom_widget.activate_button.click()
         bom_widget.compare_button.click()
         self.assertIn("请选择", bom_widget.status_label.text())
 

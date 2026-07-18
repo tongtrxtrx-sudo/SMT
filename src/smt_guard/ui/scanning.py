@@ -5,8 +5,10 @@ from datetime import datetime
 from typing import Protocol
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QBoxLayout,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -33,6 +36,7 @@ from smt_guard.records import Attempt
 from smt_guard.run import AttemptSink, ProductionRun, RunPersistence, VerificationRun
 from smt_guard.scan import ProductConfiguration, ScanStep
 from smt_guard.ui.formatting import display_datetime
+from smt_guard.ui.tables import set_column_widths, set_responsive_columns
 
 
 class ConfigurationSource(Protocol):
@@ -111,6 +115,7 @@ class ScanWidget(QWidget):
         selection_layout.addWidget(QLabel("产品配置"))
         self.configuration_combo = QComboBox()
         self.configuration_combo.setMinimumWidth(260)
+        self.configuration_combo.setMaximumWidth(900)
         self.start_button = QPushButton("开始新运行")
         self.start_button.setProperty("actionRole", "primary")
         self.import_configuration_button = QPushButton("没有可用配置，前往导入配置")
@@ -119,6 +124,7 @@ class ScanWidget(QWidget):
         selection_layout.addWidget(self.configuration_combo, 1)
         selection_layout.addWidget(self.start_button)
         selection_layout.addWidget(self.import_configuration_button)
+        selection_layout.addStretch(1)
         layout.addWidget(self.selection_card)
 
         self.product_summary_label = QLabel("产品：未选择")
@@ -128,8 +134,19 @@ class ScanWidget(QWidget):
         self.run_label.setStyleSheet("color: #667085;")
         layout.addWidget(self.run_label)
 
+        self.workflow_host = QWidget()
+        self.workflow_layout = QBoxLayout(QBoxLayout.Direction.TopToBottom)
+        self.workflow_layout.setContentsMargins(0, 0, 0, 0)
+        self.workflow_layout.setSpacing(12)
+        self.workflow_host.setLayout(self.workflow_layout)
+
+        self.hero_column = QWidget()
+        hero_column_layout = QVBoxLayout(self.hero_column)
+        hero_column_layout.setContentsMargins(0, 0, 0, 0)
+        hero_column_layout.setSpacing(10)
         self.hero_card = QFrame()
         self.hero_card.setObjectName("scanHero")
+        self.hero_card.setMinimumHeight(230)
         hero_layout = QVBoxLayout(self.hero_card)
         hero_layout.setContentsMargins(22, 18, 22, 18)
         hero_layout.setSpacing(10)
@@ -144,57 +161,80 @@ class ScanWidget(QWidget):
         self.feedback_label.setObjectName("scanFeedback")
         self.feedback_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.feedback_label.setMinimumHeight(170)
+        self.feedback_label.setMaximumHeight(310)
+        self.feedback_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         self.feedback_label.setWordWrap(True)
-        hero_layout.addWidget(self.feedback_label)
+        hero_layout.addWidget(self.feedback_label, 1)
         self.step_label = QLabel("设备 1  →  站位 2  →  物料 3")
         self.step_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.step_label.setStyleSheet("color: #667085;")
         hero_layout.addWidget(self.step_label)
 
-        material_row = QHBoxLayout()
+        self.material_panel = QWidget()
+        material_row = QHBoxLayout(self.material_panel)
+        material_row.setContentsMargins(0, 0, 0, 0)
         material_row.setSpacing(18)
         self.expected_label = QLabel("要求物料：-")
         self.scanned_label = QLabel("扫码物料：-")
         self.expected_label.setStyleSheet("font-size: 18px; font-weight: 600;")
         self.scanned_label.setStyleSheet("font-size: 18px; font-weight: 600;")
-        self.expected_label.hide()
-        self.scanned_label.hide()
         material_row.addStretch(1)
         material_row.addWidget(self.expected_label)
         material_row.addWidget(self.scanned_label)
         material_row.addStretch(1)
-        hero_layout.addLayout(material_row)
-        layout.addWidget(self.hero_card, 1)
+        self.material_panel.hide()
+        hero_layout.addWidget(self.material_panel)
+        hero_column_layout.addWidget(self.hero_card, 1)
 
         self.input_card = QFrame()
         self.input_card.setObjectName("scanInputCard")
+        self.input_card.setMinimumHeight(82)
         scan_row = QHBoxLayout()
-        scan_row.setContentsMargins(12, 10, 12, 10)
+        scan_row.setContentsMargins(12, 12, 12, 12)
         self.scan_input = QLineEdit()
-        self.scan_input.setPlaceholderText("扫码后自动提交；也可手动输入后按 Enter")
+        self.scan_input.setPlaceholderText("请在这里扫码；扫码枪发送 Enter 后自动提交")
+        self.scan_input.setMinimumHeight(56)
+        self.scan_input.setStyleSheet("font-size: 18px; padding: 0 14px;")
         self.scan_input.setEnabled(False)
         self.scan_input.installEventFilter(self)
         self.submit_button = QPushButton("手动提交")
         self.submit_button.setToolTip("仅用于键盘调试；扫码枪发送 Enter 时会自动提交")
+        self.submit_button.setMinimumHeight(56)
         self.submit_button.setEnabled(False)
         scan_row.addWidget(self.scan_input, 1)
         scan_row.addWidget(self.submit_button)
         self.input_card.setLayout(scan_row)
-        layout.addWidget(self.input_card)
+        hero_column_layout.addWidget(self.input_card)
+        self.workflow_layout.addWidget(self.hero_column)
 
+        self.overview_column = QWidget()
+        overview_layout = QVBoxLayout(self.overview_column)
+        overview_layout.setContentsMargins(0, 0, 0, 0)
+        overview_layout.setSpacing(10)
+        self.progress_card = QFrame()
+        self.progress_card.setObjectName("contentCard")
+        self.progress_card.setMinimumHeight(68)
+        progress_layout = QHBoxLayout(self.progress_card)
+        progress_layout.setContentsMargins(14, 10, 14, 10)
+        progress_layout.setSpacing(14)
         progress_title = QLabel("本次进度")
-        progress_title.setStyleSheet("font-weight: 700;")
-        layout.addWidget(progress_title)
+        progress_title.setObjectName("sectionTitle")
+        progress_layout.addWidget(progress_title)
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(24)
-        layout.addWidget(self.progress_bar)
+        self.progress_bar.setFixedHeight(22)
+        progress_layout.addWidget(self.progress_bar, 1)
         self.progress_count_label = QLabel("0 / 0")
         self.progress_count_label.setObjectName("progressCount")
         self.progress_count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.progress_count_label)
+        self.progress_count_label.setMinimumWidth(110)
+        progress_layout.addWidget(self.progress_count_label)
+        overview_layout.addWidget(self.progress_card)
 
         self.history_card = QFrame()
         self.history_card.setObjectName("historyCard")
@@ -215,9 +255,20 @@ class ScanWidget(QWidget):
         self.attempt_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.attempt_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.attempt_table.verticalHeader().setVisible(False)
+        set_column_widths(self.attempt_table, (145, 90, 90, 150, 150, 65, 60))
+        set_responsive_columns(
+            self.attempt_table,
+            stretch=(0, 1, 2, 3, 4),
+            compact=(5, 6),
+        )
         self.attempt_table.setVisible(False)
         history_layout.addWidget(self.attempt_table, 1)
-        layout.addWidget(self.history_card)
+        overview_layout.addWidget(self.history_card, 1)
+        self.workflow_layout.addWidget(self.overview_column)
+        layout.addWidget(self.workflow_host, 1)
+        self._history_user_overridden = False
+        self._wide_layout: bool | None = None
+        self._apply_responsive_layout(self.width())
 
     def _connect_signals(self) -> None:
         self.start_button.clicked.connect(self._start_run)
@@ -225,6 +276,7 @@ class ScanWidget(QWidget):
         self.scan_input.returnPressed.connect(self._submit_scan)
         self.scanner_status_button.clicked.connect(self.focus_scanner)
         self.history_button.toggled.connect(self._toggle_history)
+        self.history_button.clicked.connect(self._remember_history_override)
         self.import_configuration_button.clicked.connect(self.import_requested.emit)
         self.configuration_combo.currentTextChanged.connect(
             self._update_product_summary
@@ -242,6 +294,34 @@ class ScanWidget(QWidget):
     def _toggle_history(self, expanded: bool) -> None:
         self.attempt_table.setVisible(expanded)
         self.history_button.setText("收起" if expanded else "展开")
+        self.history_card.setMaximumHeight(16777215 if expanded else 82)
+
+    @Slot(bool)
+    def _remember_history_override(self, _expanded: bool) -> None:
+        self._history_user_overridden = True
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        """Reflow the primary task and overview at shop-floor full-screen widths."""
+        super().resizeEvent(event)
+        self._apply_responsive_layout(event.size().width())
+
+    def _apply_responsive_layout(self, width: int) -> None:
+        wide = width >= 1400
+        if wide == self._wide_layout:
+            return
+        self._wide_layout = wide
+        self.workflow_layout.setDirection(QBoxLayout.Direction.TopToBottom)
+        self.workflow_layout.setStretch(0, 0)
+        self.workflow_layout.setStretch(1, 1)
+        self.hero_card.setMinimumHeight(320 if wide else 220)
+        self.hero_card.setMaximumHeight(400 if wide else 290)
+        self.hero_column.setMaximumHeight(492 if wide else 382)
+        self.progress_card.setMaximumHeight(72)
+        if not self._history_user_overridden:
+            self.history_button.setChecked(wide)
+        self.history_card.setMaximumHeight(
+            16777215 if self.history_button.isChecked() else 82
+        )
 
     @Slot()
     def refresh_configurations(self) -> None:
@@ -447,8 +527,7 @@ class ScanWidget(QWidget):
                 and self._run.current_step is ScanStep.MATERIAL
             )
         )
-        self.expected_label.setVisible(show_material)
-        self.scanned_label.setVisible(show_material)
+        self.material_panel.setVisible(show_material)
         self._render_step_indicator()
         self.progress_bar.setValue(state.completed_stations)
         self.progress_count_label.setText(

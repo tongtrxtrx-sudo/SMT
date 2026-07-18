@@ -5,9 +5,11 @@ from tempfile import TemporaryDirectory
 
 from openpyxl import Workbook
 
+from smt_guard.bom import BomStatus
 from smt_guard.configuration import ImportValidationError
 from smt_guard.importing import ConfigurationImportService
 from smt_guard.sqlite import (
+    SqliteBomRepository,
     SqliteDatabase,
     SqliteMasterDataRepository,
     SqliteProductConfigurationRepository,
@@ -90,6 +92,28 @@ class ConfigurationImportWorkflowTests(unittest.TestCase):
         self.assertEqual("501000087", result.document.product.material_code)
         self.assertEqual(1, len(result.configuration.assignments))
         self.assertEqual("013000081", stored.required_material("SMT-01", "F-01"))
+
+    def test_full_import_activates_the_linked_bom_after_validation(self) -> None:
+        boms = SqliteBomRepository(self.connection)
+        service = ConfigurationImportService(
+            OpenpyxlWorkbookReader(),
+            self.master_data,
+            self.configurations,
+            boms,
+            operator="OP-UI",
+        )
+
+        result = service.import_files(
+            self.write_bom(),
+            self.write_stations(),
+            version="V1",
+            station_sheet="Stations",
+        )
+
+        versions = boms.list_versions("501000087")
+        self.assertEqual(1, len(versions))
+        self.assertEqual(BomStatus.ACTIVE, versions[0].status)
+        self.assertEqual(versions[0].id, result.configuration.bom_version_id)
 
     def test_reports_invalid_material_with_excel_row_and_does_not_save(self) -> None:
         with self.assertRaises(ImportValidationError) as caught:

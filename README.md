@@ -7,8 +7,8 @@ configuration.
 ## MVP capabilities
 
 - Configure devices and physical stations.
-- Record the current operator once per application session and attribute all subsequent changes,
-  imports, production runs, and audits to that operator.
+- Restore the last confirmed operator at startup and attribute all subsequent changes, imports,
+  production runs, and audits to that operator until an explicit switch.
 - Follow a guided BOM -> station table -> validation and activation import flow.
 - Scan device, station, and material codes in a controlled sequence.
 - Compare material codes exactly while preserving leading zeroes.
@@ -53,6 +53,12 @@ Start the desktop application from the synchronized project environment:
 uv run smt-guard
 ```
 
+The production window starts maximized. The scan page keeps one vertical reading order: a bounded
+current-task card, large scanner input, compact single-row progress, and a full-width attempt table.
+The attempt table is shown by default at full-screen widths and collapsed in a medium window.
+Management tables and detail panes also share available width responsively, while the import guide
+remains centered at a readable maximum width.
+
 Application data is stored in `%LOCALAPPDATA%\SMTGuard\smt_guard.sqlite3` by default.
 
 ## Persistence foundation
@@ -66,8 +72,9 @@ so zero-scan and interrupted runs remain queryable and recoverable through the r
 
 The desktop UI exposes eight focused pages grouped as work, configuration, and system tasks, with
 scanning as the first page. After confirmation, the shared operator editor collapses to the current
-identity and a deliberate switch action. Write actions are rejected until a non-empty operator
-identifier is confirmed.
+identity and a deliberate switch action. The confirmed identity is restored from the application
+data directory on the next startup. Write actions are rejected until a non-empty operator identifier
+is confirmed.
 
 ## Product lifecycle workflow
 
@@ -77,8 +84,9 @@ identifier is confirmed.
 3. Import a BOM. For a changed BOM whose previous version already exists, fill **BOM 新版本** so
    the change is stored as another draft instead of modifying released details in place.
 4. Use **配置 · BOM** to compare compact version summaries, then inspect materials and provenance
-   (source filename, SHA-256, import time, and operator) in the detail pane before enabling or
-   disabling a version.
+   (source filename, SHA-256, import time, and operator) in the detail pane. The three-step import
+   flow marks the linked BOM as the current version automatically; production availability is
+   controlled by the product configuration instead of separate BOM enable/disable buttons.
 5. Use **产品配置** to copy a released configuration into a new draft, add/remove/edit station
    assignments, validate it, and publish/activate/disable/archive it. Released assignment details
    are immutable. The scan page lists only active, non-empty configurations whose referenced

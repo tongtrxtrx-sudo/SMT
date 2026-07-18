@@ -23,6 +23,7 @@ class PageHeader(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("pageHeader")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
@@ -33,6 +34,14 @@ class PageHeader(QWidget):
         self.subtitle_label.setWordWrap(True)
         layout.addWidget(self.title_label)
         layout.addWidget(self.subtitle_label)
+        accent_row = QHBoxLayout()
+        accent_row.setContentsMargins(0, 5, 0, 0)
+        self.accent = QFrame()
+        self.accent.setObjectName("pageAccent")
+        self.accent.setFixedSize(54, 3)
+        accent_row.addWidget(self.accent)
+        accent_row.addStretch(1)
+        layout.addLayout(accent_row)
 
 
 class EmptyState(QFrame):
@@ -86,6 +95,7 @@ def content_card(*, object_name: str = "contentCard") -> QFrame:
 def section_heading(title: str, description: str = "") -> QWidget:
     """Return a compact section heading for cards and split panes."""
     widget = QWidget()
+    widget.setObjectName("sectionHeading")
     layout = QHBoxLayout(widget)
     layout.setContentsMargins(0, 0, 0, 0)
     title_label = QLabel(title)
@@ -121,6 +131,6 @@ def set_feedback(label: QLabel, state: str, message: str) -> None:
     label.setProperty("feedbackState", state)
     label.setStyleSheet(
         f"background-color: {background}; color: {color}; "
-        f"border: 1px solid {border}; border-radius: 6px; padding: 7px 10px;"
+        f"border: 1px solid {border}; border-radius: 8px; padding: 9px 12px;"
     )
     label.setText(message)

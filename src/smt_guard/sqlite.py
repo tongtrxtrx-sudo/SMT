@@ -17,6 +17,7 @@ from smt_guard.master_data import (
     ReferencedEntityError,
     Station,
     UnknownEntityError,
+    natural_code_key,
     normalize_code,
 )
 from smt_guard.migrations import MIGRATIONS, Migration
@@ -527,13 +528,14 @@ class SqliteMasterDataRepository:
         device = self.get_device(device_code)
         rows = self._connection.execute(
             "SELECT device_code, code, enabled, referenced, name, archived "
-            "FROM stations WHERE device_code = ? ORDER BY code",
+            "FROM stations WHERE device_code = ?",
             (device.code,),
         )
-        return [
+        stations = [
             Station(str(r[0]), str(r[1]), bool(r[2]), bool(r[3]), str(r[4]), bool(r[5]))
             for r in rows
         ]
+        return sorted(stations, key=lambda station: natural_code_key(station.code))
 
     def search_stations(
         self,
@@ -550,7 +552,7 @@ class SqliteMasterDataRepository:
             "SELECT device_code, code, enabled, referenced, name, archived FROM stations "
             "WHERE device_code = ? AND (? = '%%' OR code LIKE ? OR name LIKE ?) "
             "AND (? IS NULL OR enabled = ?) "
-            "AND (? = 1 OR archived = 0) ORDER BY code",
+            "AND (? = 1 OR archived = 0)",
             (
                 device.code,
                 pattern,
@@ -561,10 +563,11 @@ class SqliteMasterDataRepository:
                 int(include_archived),
             ),
         )
-        return [
+        stations = [
             Station(str(r[0]), str(r[1]), bool(r[2]), bool(r[3]), str(r[4]), bool(r[5]))
             for r in rows
         ]
+        return sorted(stations, key=lambda station: natural_code_key(station.code))
 
     def update_station(
         self,

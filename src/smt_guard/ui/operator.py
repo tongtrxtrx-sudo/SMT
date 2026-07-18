@@ -20,6 +20,7 @@ class OperatorSessionWidget(QWidget):
         announcer: AnnouncementSink | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("operatorBar")
         self._session = session
         self._announcer = announcer or SilentAnnouncementSink()
         layout = QHBoxLayout(self)
@@ -27,9 +28,11 @@ class OperatorSessionWidget(QWidget):
         self.prompt_label = QLabel("当前操作员")
         self.operator_input = QLineEdit(session.operator)
         self.operator_input.setPlaceholderText("请输入工号或姓名")
+        self.operator_input.setMaximumWidth(560)
         self.sign_in_button = QPushButton("确认操作员")
         self.sign_in_button.setProperty("actionRole", "primary")
         self.current_label = QLabel(self._label_text())
+        self.current_label.setObjectName("currentOperator")
         self.status_label = QLabel("未录入操作员" if not session.operator else "操作员已确认")
         self.switch_button = QPushButton("切换")
         self.switch_button.setToolTip("切换操作员会中断当前未完成的生产运行")

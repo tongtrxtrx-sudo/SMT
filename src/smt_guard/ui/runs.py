@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Protocol
 
 from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -30,10 +31,15 @@ from smt_guard.ui.components import (
     content_card,
     prepare_table,
     section_heading,
+    set_feedback,
 )
 from smt_guard.ui.date_range import DateRangeFilter
 from smt_guard.ui.formatting import display_datetime
-from smt_guard.ui.tables import readable_item, set_column_widths
+from smt_guard.ui.tables import (
+    readable_item,
+    set_column_widths,
+    set_responsive_columns,
+)
 
 
 class ProductionRunReader(Protocol):
@@ -78,6 +84,7 @@ class ProductionRunManagementWidget(QWidget):
         self._announcer = announcer or SilentAnnouncementSink()
         self._clock = clock or (lambda: datetime.now(UTC))
         self._runs: list[ProductionRun] = []
+        self._wide_layout: bool | None = None
         self._build_ui()
         self.refresh()
 
@@ -87,7 +94,7 @@ class ProductionRunManagementWidget(QWidget):
         layout.addWidget(
             PageHeader(
                 "生产运行",
-                "查询生产批次、查看站位进度与扫码记录，并处理恢复或中断。",
+                "统一查看每次扫码作业的进度、NG、站位与扫码记录，并处理恢复、中断或导出。",
             )
         )
         filter_card = content_card(object_name="filterCard")
@@ -102,13 +109,13 @@ class ProductionRunManagementWidget(QWidget):
         self.status_combo.addItems(("全部状态", "运行中", "已完成", "已中断"))
         self.query_button = QPushButton("查询")
         self.query_button.setProperty("actionRole", "primary")
-        for widget in (
-            self.query_input,
-            self.operator_input,
-            self.status_combo,
-            self.query_button,
-        ):
-            filters.addWidget(widget)
+        self.query_input.setMaximumWidth(560)
+        self.operator_input.setMaximumWidth(320)
+        filters.addWidget(self.query_input, 2)
+        filters.addWidget(self.operator_input, 1)
+        filters.addWidget(self.status_combo)
+        filters.addStretch(1)
+        filters.addWidget(self.query_button)
         filter_layout.addLayout(filters)
         self.date_range = DateRangeFilter(clock=self._clock, default_days=7)
         self.started_from_input = self.date_range.started_from_input
@@ -129,6 +136,7 @@ class ProductionRunManagementWidget(QWidget):
         self.refresh_button = QPushButton("刷新")
 
         splitter = QSplitter()
+        self.splitter = splitter
         run_list_card = content_card()
         run_list_layout = QVBoxLayout(run_list_card)
         run_list_heading = QHBoxLayout()
@@ -153,7 +161,11 @@ class ProductionRunManagementWidget(QWidget):
             self.run_table,
             (160, 140, 75, 65, 55, 115),
         )
-        self.run_table.horizontalHeader().setStretchLastSection(True)
+        set_responsive_columns(
+            self.run_table,
+            stretch=(1,),
+            compact=(2, 3, 4),
+        )
         run_list_layout.addWidget(self.run_table, 1)
         splitter.addWidget(run_list_card)
         right = QFrame()
@@ -192,7 +204,11 @@ class ProductionRunManagementWidget(QWidget):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         set_column_widths(self.station_table, (65, 50, 110, 55, 95))
-        self.station_table.horizontalHeader().setStretchLastSection(True)
+        set_responsive_columns(
+            self.station_table,
+            stretch=(0, 1, 2, 4),
+            compact=(3,),
+        )
         self.detail_tabs.addTab(self.station_table, "站位进度")
         attempts_page = QWidget()
         attempts_layout = QVBoxLayout(attempts_page)
@@ -207,6 +223,11 @@ class ProductionRunManagementWidget(QWidget):
         self.attempt_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.attempt_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         set_column_widths(self.attempt_table, (150, 100, 100, 170, 170, 70, 70))
+        set_responsive_columns(
+            self.attempt_table,
+            stretch=(0, 1, 2, 3, 4),
+            compact=(5, 6),
+        )
         attempts_layout.addWidget(self.attempt_table, 1)
         self.detail_tabs.addTab(attempts_page, "扫码记录")
         right_layout.addWidget(self.detail_tabs, 1)
@@ -220,7 +241,10 @@ class ProductionRunManagementWidget(QWidget):
         detail_actions.addWidget(self.interrupt_button)
         right_layout.addLayout(detail_actions)
         splitter.addWidget(right)
-        splitter.setSizes((750, 450))
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 6)
+        splitter.setSizes((720, 1080))
         layout.addWidget(splitter, 1)
 
         actions = QHBoxLayout()
@@ -230,6 +254,7 @@ class ProductionRunManagementWidget(QWidget):
         actions.addStretch(1)
         layout.addLayout(actions)
         self.status_label = QLabel("就绪")
+        set_feedback(self.status_label, "neutral", "就绪")
         layout.addWidget(self.status_label)
 
         self.query_button.clicked.connect(self.refresh)
@@ -242,6 +267,18 @@ class ProductionRunManagementWidget(QWidget):
         self.interrupt_button.clicked.connect(self._interrupt)
         self.view_records_button.clicked.connect(self._view_records)
         self.export_button.clicked.connect(self._export)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        """Give the detail workspace more room only when the window is genuinely wide."""
+        super().resizeEvent(event)
+        wide = event.size().width() >= 1500
+        if wide == self._wide_layout:
+            return
+        self._wide_layout = wide
+        available = max(event.size().width() - 32, 1)
+        list_ratio = 0.42 if wide else 0.62
+        list_width = int(available * list_ratio)
+        self.splitter.setSizes((list_width, available - list_width))
 
     @Slot()
     def refresh(self) -> None:
@@ -288,8 +325,10 @@ class ProductionRunManagementWidget(QWidget):
             self.interrupt_button.setEnabled(False)
             self.view_records_button.setEnabled(False)
             self.export_button.setEnabled(False)
-            self.status_label.setText(
-                f"没有匹配的生产运行 · 更新于 {self._clock():%H:%M}"
+            set_feedback(
+                self.status_label,
+                "neutral",
+                f"没有匹配的生产运行 · 更新于 {self._clock():%H:%M}",
             )
 
     @Slot()
@@ -431,9 +470,7 @@ class ProductionRunManagementWidget(QWidget):
         }[self.status_combo.currentIndex()]
 
     def _show_success(self, message: str) -> None:
-        self.status_label.setStyleSheet("color: #18794e;")
-        self.status_label.setText(message)
+        set_feedback(self.status_label, "success", message)
 
     def _show_error(self, message: str) -> None:
-        self.status_label.setStyleSheet("color: #b42318;")
-        self.status_label.setText(message)
+        set_feedback(self.status_label, "error", message)

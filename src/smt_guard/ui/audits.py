@@ -32,7 +32,11 @@ from smt_guard.ui.components import (
 )
 from smt_guard.ui.date_range import DateRangeFilter
 from smt_guard.ui.formatting import display_datetime
-from smt_guard.ui.tables import readable_item, set_column_widths
+from smt_guard.ui.tables import (
+    readable_item,
+    set_column_widths,
+    set_responsive_columns,
+)
 
 
 class AuditReader(Protocol):
@@ -109,14 +113,11 @@ class AuditLogWidget(QWidget):
         self.action_input.setPlaceholderText("动作，例如启用或中断")
         self.query_button = QPushButton("查询")
         self.query_button.setProperty("actionRole", "primary")
-        for widget in (
-            self.entity_type_input,
-            self.entity_key_input,
-            self.actor_input,
-            self.action_input,
-            self.query_button,
-        ):
-            filters.addWidget(widget)
+        filters.addWidget(self.entity_type_input, 2)
+        filters.addWidget(self.entity_key_input, 2)
+        filters.addWidget(self.actor_input, 1)
+        filters.addWidget(self.action_input, 1)
+        filters.addWidget(self.query_button)
         filter_layout.addLayout(filters)
         self.date_range = DateRangeFilter(clock=self._clock, default_days=7)
         self.started_from_input = self.date_range.started_from_input
@@ -133,6 +134,7 @@ class AuditLogWidget(QWidget):
         layout.addLayout(result_header)
 
         splitter = QSplitter()
+        self.splitter = splitter
         self.audit_stack = QStackedWidget()
         self.empty_state = EmptyState(
             "等待加载审计日志",
@@ -149,13 +151,16 @@ class AuditLogWidget(QWidget):
         set_column_widths(self.audit_table, (50, 135, 80, 165, 75, 90, 280, 280))
         self.audit_table.setColumnHidden(6, True)
         self.audit_table.setColumnHidden(7, True)
-        self.audit_table.horizontalHeader().setStretchLastSection(True)
+        set_responsive_columns(
+            self.audit_table,
+            stretch=(1, 2, 3),
+            compact=(0, 4, 5),
+        )
         self.audit_stack.addWidget(self.audit_table)
         splitter.addWidget(self.audit_stack)
 
         detail_card = content_card(object_name="detailCard")
-        detail_card.setMinimumWidth(310)
-        detail_card.setMaximumWidth(400)
+        detail_card.setMinimumWidth(360)
         detail_layout = QVBoxLayout(detail_card)
         self.detail_title = QLabel("选择一条日志")
         self.detail_title.setObjectName("sectionTitle")
@@ -175,7 +180,10 @@ class AuditLogWidget(QWidget):
         self.after_text.setPlaceholderText("无变更后数据")
         detail_layout.addWidget(self.after_text, 1)
         splitter.addWidget(detail_card)
-        splitter.setSizes((720, 340))
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 6)
+        splitter.setStretchFactor(1, 4)
+        splitter.setSizes((1080, 720))
         layout.addWidget(splitter, 1)
         self.status_label = QLabel("尚未查询；打开本页后将自动加载最新审计日志")
         set_feedback(

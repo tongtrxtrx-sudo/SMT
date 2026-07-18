@@ -26,10 +26,10 @@ QWidget {
     font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI";
     font-size: 14px;
     color: #1d2939;
-    background-color: #f8fafc;
+    background-color: #f4f7fb;
 }
 QMainWindow, QStackedWidget, QTabWidget, QTabWidget::pane, QTabBar {
-    background-color: #f8fafc;
+    background-color: #f4f7fb;
 }
 QTabBar::tab {
     background-color: #eaecf0;
@@ -41,59 +41,96 @@ QTabBar::tab:selected {
     color: #175cd3;
 }
 QGroupBox {
-    border: 1px solid #d0d5dd;
-    border-radius: 6px;
-    margin-top: 12px;
-    padding-top: 8px;
+    border: 1px solid #dbe4f0;
+    border-radius: 12px;
+    margin-top: 16px;
+    padding-top: 12px;
     background-color: #ffffff;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 5px;
+    left: 14px;
+    padding: 0 7px;
+    color: #344054;
+    font-weight: 700;
 }
 QLineEdit, QSpinBox, QComboBox, QDateTimeEdit, QTableWidget {
     background-color: #ffffff;
     color: #1d2939;
-    border: 1px solid #98a2b3;
-    border-radius: 4px;
-    padding: 5px;
+    border: 1px solid #c7d2e0;
+    border-radius: 7px;
+    padding: 7px;
     selection-background-color: #d1e9ff;
     selection-color: #102a56;
+}
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus {
+    border: 2px solid #2e90fa;
+    background-color: #ffffff;
+}
+QSpinBox {
+    padding-right: 84px;
+}
+QToolButton#spinIncrement, QToolButton#spinDecrement {
+    color: #175cd3;
+    background-color: #f0f5fb;
+    border: 1px solid #c7d2e0;
+    border-radius: 4px;
+    font-size: 17px;
+    font-weight: 700;
+    font-family: "Microsoft YaHei UI";
+    padding: 0;
+}
+QToolButton#spinIncrement:hover, QToolButton#spinDecrement:hover {
+    background-color: #dcecff;
+}
+QToolButton#spinIncrement:pressed, QToolButton#spinDecrement:pressed {
+    background-color: #b2ddff;
 }
 QAbstractItemView {
     background-color: #ffffff;
     color: #1d2939;
 }
 QTableWidget {
-    gridline-color: #d0d5dd;
-    alternate-background-color: #f9fafb;
+    gridline-color: #e4e7ec;
+    alternate-background-color: #f7f9fc;
+    border: 1px solid #dbe4f0;
+    border-radius: 8px;
+    padding: 0;
 }
 QTableWidget::item {
     background-color: #ffffff;
     color: #1d2939;
+    padding: 6px 8px;
+    border-bottom: 1px solid #eef2f6;
 }
+QTableWidget::item:alternate { background-color: #f7f9fc; }
 QTableWidget::item:selected {
-    background-color: #d1e9ff;
+    background-color: #dcecff;
     color: #102a56;
 }
 QHeaderView::section, QTableCornerButton::section {
-    background-color: #eaecf0;
+    background-color: #eef3f8;
     color: #344054;
-    border: 1px solid #d0d5dd;
-    padding: 6px;
-    font-weight: 600;
+    border: 0;
+    border-right: 1px solid #dbe4f0;
+    border-bottom: 1px solid #dbe4f0;
+    padding: 8px;
+    font-weight: 700;
 }
 QPushButton {
     background-color: #ffffff;
     color: #344054;
-    border: 1px solid #98a2b3;
-    border-radius: 4px;
-    padding: 7px 14px;
+    border: 1px solid #aebdce;
+    border-radius: 7px;
+    min-height: 34px;
+    padding: 6px 15px;
+    font-weight: 600;
 }
 QPushButton:hover {
-    background-color: #f2f4f7;
+    background-color: #f0f5fb;
+    border-color: #7f98b3;
 }
+QPushButton:focus { border: 2px solid #84caff; }
 QPushButton[actionRole="primary"] {
     background-color: #175cd3;
     color: #ffffff;
@@ -124,13 +161,17 @@ QPushButton:disabled {
     border-color: #d0d5dd;
 }
 QFrame#sideNavigation {
-    background-color: #f2f4f7;
-    border-right: 1px solid #d0d5dd;
+    background-color: #f8fafc;
+    border-right: 1px solid #dbe4f0;
 }
 QLabel#navBrand {
-    font-size: 20px;
+    font-size: 21px;
     font-weight: 700;
-    padding: 4px 8px 12px 8px;
+    color: #102a56;
+    background-color: #ffffff;
+    border: 1px solid #e4eaf1;
+    border-radius: 10px;
+    padding: 13px 10px;
 }
 QLabel#navSection {
     color: #475467;
@@ -142,22 +183,36 @@ QPushButton[navItem="true"] {
     background-color: transparent;
     color: #344054;
     border: 0;
-    border-radius: 6px;
-    padding: 10px 14px;
+    border-radius: 8px;
+    min-height: 36px;
+    padding: 9px 14px;
     text-align: left;
 }
 QPushButton[navItem="true"]:hover {
     background-color: #e4e7ec;
 }
 QPushButton[navItem="true"]:checked {
-    background-color: #d1e9ff;
+    background-color: #e6f1ff;
     color: #175cd3;
+    border-left: 4px solid #2e90fa;
     font-weight: 700;
 }
+QFrame#operatorBar {
+    background-color: #ffffff;
+    border-bottom: 1px solid #dbe4f0;
+}
+QLabel#currentOperator {
+    color: #344054;
+    background-color: #f1f5f9;
+    border: 1px solid #dbe4f0;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-weight: 600;
+}
 QFrame#diagnosticBar {
-    background-color: #ecfdf3;
-    border: 1px solid #abefc6;
-    border-radius: 6px;
+    background-color: #effcf6;
+    border: 1px solid #b7ebcf;
+    border-radius: 8px;
 }
 QLabel#diagnosticText {
     color: #067647;
@@ -168,11 +223,11 @@ QFrame#historyCard, QFrame#runSummaryCard, QFrame#dropZone,
 QFrame#contentCard, QFrame#filterCard, QFrame#detailCard,
 QFrame#actionCard, QFrame#emptyState {
     background-color: #ffffff;
-    border: 1px solid #d0d5dd;
-    border-radius: 10px;
+    border: 1px solid #dbe4f0;
+    border-radius: 12px;
 }
 QFrame#filterCard, QFrame#actionCard {
-    background-color: #f9fafb;
+    background-color: #f8fafc;
 }
 QFrame#emptyState {
     border-style: dashed;
@@ -180,7 +235,17 @@ QFrame#emptyState {
 }
 QFrame#dropZone {
     border: 2px dashed #b2ccff;
-    background-color: #f8faff;
+    background-color: #f5f9ff;
+}
+QWidget#pageHeader { background-color: transparent; }
+QFrame#pageAccent {
+    background-color: #2e90fa;
+    border: 0;
+    border-radius: 1px;
+}
+QWidget#sectionHeading {
+    background-color: #f4f7fb;
+    border-radius: 7px;
 }
 QLabel#productSummary {
     font-size: 25px;
@@ -197,12 +262,13 @@ QLabel[summaryChip="true"] {
     font-weight: 600;
 }
 QLabel#pageTitle {
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 700;
+    color: #102a56;
 }
 QLabel#pageSubtitle {
     color: #667085;
-    font-size: 13px;
+    font-size: 14px;
 }
 QLabel#sectionTitle {
     font-size: 16px;
@@ -222,8 +288,9 @@ QLabel#emptyStateDescription {
     color: #667085;
 }
 QLabel[metricChip="true"] {
-    border-radius: 7px;
-    padding: 8px 12px;
+    border: 1px solid #e4e7ec;
+    border-radius: 9px;
+    padding: 9px 13px;
     font-size: 14px;
     font-weight: 600;
     background-color: #f2f4f7;
@@ -250,13 +317,22 @@ QLabel#scanFeedback {
     border-radius: 12px;
 }
 QProgressBar {
-    border: 1px solid #98a2b3;
-    border-radius: 4px;
+    border: 1px solid #b7c4d3;
+    border-radius: 6px;
     background-color: #ffffff;
     text-align: center;
 }
 QProgressBar::chunk {
     background-color: #12b76a;
+    border-radius: 5px;
+}
+QSplitter::handle { background-color: transparent; }
+QSplitter::handle:hover { background-color: #d1e9ff; }
+QToolTip {
+    background-color: #102a56;
+    color: #ffffff;
+    border: 0;
+    padding: 6px 8px;
 }
 """
 
@@ -295,7 +371,11 @@ class MainWindow(QMainWindow):
     SCAN_TAB = 0
     RUNS_TAB = 1
     RECORDS_TAB = 2
+    MASTER_DATA_TAB = 3
     IMPORT_TAB = 4
+    BOMS_TAB = 5
+    CONFIGURATIONS_TAB = 6
+    AUDITS_TAB = 7
 
     PAGE_NAMES = (
         "扫码作业",
@@ -375,6 +455,11 @@ class MainWindow(QMainWindow):
             self.navigation_group.addButton(button, index)
             self.navigation_buttons.append(button)
             navigation_layout.addWidget(button)
+            if index == self.RECORDS_TAB:
+                # Keep the advanced query page composed for compatibility and
+                # direct workflows, but use Production Runs as the single
+                # operator-facing entry point for scan records.
+                button.setHidden(True)
         navigation_layout.addStretch(1)
         body.addWidget(self.side_navigation)
 
@@ -425,6 +510,8 @@ class MainWindow(QMainWindow):
     def _prepare_table_viewports(self) -> None:
         """Force opaque light table surfaces after Qt polishes the active tab."""
         for table in self.findChildren(QTableWidget):
+            table.setAlternatingRowColors(True)
+            table.verticalHeader().setDefaultSectionSize(36)
             table_palette = light_palette(table.palette())
             table_palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
             table.setPalette(table_palette)

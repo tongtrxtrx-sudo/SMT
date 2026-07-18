@@ -17,6 +17,10 @@ from PySide6.QtWidgets import QApplication
 from smt_guard.app import ApplicationRuntime, create_runtime
 from smt_guard.feedback import FeedbackTone, VoicePrompt
 from smt_guard.scan import ProductConfiguration
+from smt_guard.ui.audits import AuditLogWidget
+from smt_guard.ui.boms import BomManagementWidget
+from smt_guard.ui.configurations import ConfigurationManagementWidget
+from smt_guard.ui.master_data import DeviceStationWidget
 from smt_guard.ui.operator import OperatorSessionWidget
 from smt_guard.ui.records import RecordQueryWidget
 from smt_guard.ui.runs import ProductionRunManagementWidget
@@ -112,13 +116,16 @@ class ApplicationCompositionTests(unittest.TestCase):
         self.app.processEvents()
 
     def test_composes_grouped_side_navigation(self) -> None:
-        labels = [button.text() for button in self.runtime.window.navigation_buttons]
+        labels = [
+            button.text()
+            for button in self.runtime.window.navigation_buttons
+            if not button.isHidden()
+        ]
 
         self.assertEqual(
             [
                 "扫码作业",
                 "生产运行",
-                "记录查询",
                 "设备与站位",
                 "导入配置",
                 "BOM 管理",
@@ -126,6 +133,15 @@ class ApplicationCompositionTests(unittest.TestCase):
                 "审计日志",
             ],
             labels,
+        )
+        self.assertTrue(
+            self.runtime.window.navigation_buttons[
+                self.runtime.window.RECORDS_TAB
+            ].isHidden()
+        )
+        self.assertIsInstance(
+            self.runtime.window.tab_widget.widget(self.runtime.window.RECORDS_TAB),
+            RecordQueryWidget,
         )
         self.assertTrue(self.runtime.window.navigation_buttons[0].isChecked())
         self.assertEqual(180, self.runtime.window.side_navigation.width())
@@ -154,6 +170,30 @@ class ApplicationCompositionTests(unittest.TestCase):
 
         self.assertEqual("Machine 1", reopened.master_data.get_device("SMT-01").name)
         self.assertTrue((self.data_directory / "smt_guard.sqlite3").is_file())
+
+    def test_restores_the_last_confirmed_operator_across_runtime_reopen(self) -> None:
+        control = self.runtime.window.findChild(OperatorSessionWidget)
+        if control is None:
+            self.fail("Missing operator session control")
+        control.operator_input.setText(" OP-LAST ")
+        control.sign_in_button.click()
+        self.assertEqual("OP-LAST", self.runtime.operator_session.require())
+        self.runtime.close()
+
+        reopened = self.create_runtime()
+        self.addCleanup(reopened.close)
+        reopened_control = reopened.window.findChild(OperatorSessionWidget)
+        if reopened_control is None:
+            self.fail("Missing reopened operator session control")
+
+        self.assertEqual("OP-LAST", reopened.operator_session.require())
+        self.assertEqual("OP-LAST", reopened_control.operator_input.text())
+        self.assertTrue(reopened_control.operator_input.isHidden())
+        self.assertIn("OP-LAST", reopened_control.current_label.text())
+        self.assertEqual(
+            "OP-LAST",
+            (self.data_directory / "last_operator.txt").read_text(encoding="utf-8"),
+        )
 
     def test_import_completion_refreshes_scan_configurations(self) -> None:
         self.runtime.master_data.add_device("SMT-01", "Machine 1", "Line A")
@@ -259,6 +299,120 @@ class ApplicationCompositionTests(unittest.TestCase):
             ],
             self.announcements.prompts,
         )
+
+    def test_complete_eight_page_workflow_uses_real_database_and_workbooks(self) -> None:
+        """Simulate the daily workflow through every production page."""
+        operator = self.runtime.window.findChild(OperatorSessionWidget)
+        if operator is None:
+            self.fail("Missing operator session control")
+        operator.operator_input.setText(" OP-E2E ")
+        operator.sign_in_button.click()
+
+        master_widget = self.runtime.window.tab_widget.widget(
+            self.runtime.window.MASTER_DATA_TAB
+        )
+        if not isinstance(master_widget, DeviceStationWidget):
+            raise AssertionError("Master-data tab contains an unexpected widget")
+        master_widget.device_code_input.setText("SMT-01")
+        master_widget.device_name_input.setText("贴片机一号")
+        master_widget.device_line_input.setText("A 线")
+        master_widget.add_device_button.click()
+        master_widget.station_code_input.setText("F-01")
+        master_widget.station_name_input.setText("前段一号站位")
+        master_widget.add_station_button.click()
+
+        bom_path, station_path = self.write_import_workbooks()
+        import_widget = self.runtime.import_widget
+        import_widget.bom_path_input.setText(str(bom_path))
+        import_widget.station_path_input.setText(str(station_path))
+        import_widget.station_sheet_input.setText("Stations")
+        import_widget.version_input.setText("V1")
+        import_widget.bom_import_button.click()
+        import_widget.review_button.click()
+        import_widget.station_import_button.click()
+        self.assertIn("导入成功", import_widget.status_label.text())
+
+        self.runtime.window.tab_widget.setCurrentIndex(self.runtime.window.SCAN_TAB)
+        self.runtime.scan_widget.start_button.click()
+        for code in ("SMT-01", "F-01", "WRONG", "013000081"):
+            self.scanner_enter(code)
+        self.assertEqual(2, self.runtime.scan_widget.attempt_table.rowCount())
+
+        run_widget = self.runtime.window.tab_widget.widget(self.runtime.window.RUNS_TAB)
+        if not isinstance(run_widget, ProductionRunManagementWidget):
+            raise AssertionError("Run tab contains an unexpected widget")
+        self.runtime.window.tab_widget.setCurrentIndex(self.runtime.window.RUNS_TAB)
+        run_widget.refresh()
+        run_widget.view_records_button.click()
+        self.assertEqual(2, run_widget.attempt_table.rowCount())
+        self.assertIn("NG 1", run_widget.attempt_summary_label.text())
+        run_export = self.data_directory / "complete-run.csv"
+        with patch(
+            "smt_guard.ui.runs.QFileDialog.getSaveFileName",
+            return_value=(str(run_export), "CSV 文件 (*.csv)"),
+        ):
+            run_widget.export_button.click()
+        self.assertTrue(run_export.is_file())
+
+        records_widget = self.runtime.window.tab_widget.widget(
+            self.runtime.window.RECORDS_TAB
+        )
+        if not isinstance(records_widget, RecordQueryWidget):
+            raise AssertionError("Records tab contains an unexpected widget")
+        records_widget.run_id_input.setText("RUN-1")
+        records_widget.query_button.click()
+        records_export = self.data_directory / "complete-records.csv"
+        records_widget.export_path_input.setText(str(records_export))
+        records_widget.export_button.click()
+        self.assertEqual(2, records_widget.record_table.rowCount())
+        self.assertTrue(records_export.is_file())
+
+        master_widget.device_name_input.setText("贴片机一号（已校准）")
+        master_widget.update_device_button.click()
+        master_widget.station_table.selectRow(0)
+        master_widget.disable_station_button.click()
+        master_widget.enable_station_button.click()
+        self.assertTrue(self.runtime.master_data.is_station_enabled("SMT-01", "F-01"))
+
+        bom_widget = self.runtime.window.tab_widget.widget(self.runtime.window.BOMS_TAB)
+        if not isinstance(bom_widget, BomManagementWidget):
+            raise AssertionError("BOM tab contains an unexpected widget")
+        bom_widget.refresh()
+        self.assertEqual("当前版本", bom_widget.version_table.item(0, 2).text())  # type: ignore[union-attr]
+        self.assertFalse(hasattr(bom_widget, "activate_button"))
+        self.assertFalse(hasattr(bom_widget, "disable_button"))
+
+        configuration_widget = self.runtime.window.tab_widget.widget(
+            self.runtime.window.CONFIGURATIONS_TAB
+        )
+        if not isinstance(configuration_widget, ConfigurationManagementWidget):
+            raise AssertionError("Configuration tab contains an unexpected widget")
+        configuration_widget.refresh()
+        configuration_widget.new_version_input.setText("V2")
+        configuration_widget.copy_button.click()
+        configuration_widget.validate_button.click()
+        configuration_widget.activate_button.click()
+        configuration_widget.disable_button.click()
+        self.assertIn("已停用", configuration_widget.status_label.text())
+
+        audit_widget = self.runtime.window.tab_widget.widget(self.runtime.window.AUDITS_TAB)
+        if not isinstance(audit_widget, AuditLogWidget):
+            raise AssertionError("Audit tab contains an unexpected widget")
+        audit_widget.actor_input.setText("OP-E2E")
+        audit_widget.refresh()
+        self.assertGreaterEqual(audit_widget.audit_table.rowCount(), 2)
+        self.assertIn("OP-E2E", audit_widget.detail_meta.text())
+
+        for page_index in range(self.runtime.window.tab_widget.count()):
+            self.runtime.window.tab_widget.setCurrentIndex(page_index)
+            self.app.processEvents()
+            self.assertIs(
+                self.runtime.window.tab_widget.widget(page_index),
+                self.runtime.window.tab_widget.currentWidget(),
+            )
+
+        integrity = self.runtime.connection.execute("PRAGMA integrity_check").fetchone()
+        self.assertEqual(("ok",), integrity)
 
     def test_operator_control_rejects_blank_and_updates_shared_session(self) -> None:
         control = self.runtime.window.findChild(OperatorSessionWidget)

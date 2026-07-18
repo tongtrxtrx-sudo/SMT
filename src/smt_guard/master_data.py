@@ -1,11 +1,22 @@
 """Device and station master-data management."""
 
+import re
 from dataclasses import dataclass
+
+_CODE_PART_PATTERN = re.compile(r"\d+|\D+")
 
 
 def normalize_code(value: str) -> str:
     """Remove scanner or form whitespace while preserving code characters."""
     return value.strip()
+
+
+def natural_code_key(value: str) -> tuple[tuple[int, int, str], ...]:
+    """Sort embedded digit groups numerically while preserving text prefixes."""
+    return tuple(
+        (1, int(part), part) if part.isdecimal() else (0, 0, part.casefold())
+        for part in _CODE_PART_PATTERN.findall(value)
+    )
 
 
 class MasterDataError(ValueError):
@@ -125,7 +136,10 @@ class MasterDataService:
 
     def list_stations(self, device_code: str) -> list[Station]:
         normalized = self.get_device(device_code).code
-        return [station for key, station in self._stations.items() if key[0] == normalized]
+        stations = [
+            station for key, station in self._stations.items() if key[0] == normalized
+        ]
+        return sorted(stations, key=lambda station: natural_code_key(station.code))
 
     def is_station_enabled(self, device_code: str, station_code: str) -> bool:
         try:

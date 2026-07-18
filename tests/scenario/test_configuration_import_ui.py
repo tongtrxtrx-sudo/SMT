@@ -171,6 +171,18 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
         self.assertIn("BOM", widget.status_label.text())
         self.assertEqual([VoicePrompt.IMPORT_FAILED], announcer.prompts)
 
+    def test_full_screen_workflow_stays_centered_at_a_readable_width(self) -> None:
+        widget = self.make_widget(FakeImportWorkflow(result=sample_result()))
+        widget.resize(1920, 900)
+        widget.show()
+        self.app.processEvents()
+
+        self.assertLessEqual(widget.workflow_shell.width(), 1280)
+        left_margin = widget.workflow_shell.geometry().left()
+        right_margin = widget.width() - widget.workflow_shell.geometry().right() - 1
+        self.assertLessEqual(abs(left_margin - right_margin), 24)
+        self.assertGreater(widget.workflow_shell.width(), 1000)
+
 
 if __name__ == "__main__":
     unittest.main()

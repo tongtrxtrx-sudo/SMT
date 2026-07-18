@@ -28,7 +28,11 @@ from smt_guard.ui.components import (
     set_feedback,
 )
 from smt_guard.ui.formatting import display_datetime
-from smt_guard.ui.tables import readable_item, set_column_widths
+from smt_guard.ui.tables import (
+    readable_item,
+    set_column_widths,
+    set_responsive_columns,
+)
 
 
 class AttemptReader(Protocol):
@@ -96,10 +100,12 @@ class RecordQueryWidget(QWidget):
         self.run_id_input = QLineEdit()
         self.run_id_input.setPlaceholderText("输入运行编号")
         self.run_id_input.setClearButtonEnabled(True)
+        self.run_id_input.setMaximumWidth(720)
         self.query_button = QPushButton("查询")
         self.query_button.setProperty("actionRole", "primary")
         query_row.addWidget(self.run_id_input, 1)
         query_row.addWidget(self.query_button)
+        query_row.addStretch(1)
         query_layout.addLayout(query_row)
         layout.addWidget(query_card)
 
@@ -152,7 +158,11 @@ class RecordQueryWidget(QWidget):
         )
         for hidden_column in (0, 2, 3, 4):
             self.record_table.setColumnHidden(hidden_column, True)
-        self.record_table.horizontalHeader().setStretchLastSection(True)
+        set_responsive_columns(
+            self.record_table,
+            stretch=(1, 5, 6, 7, 8),
+            compact=(9, 10),
+        )
         self.record_stack.addWidget(self.record_table)
         result_layout.addWidget(self.record_stack, 1)
         layout.addWidget(result_card, 1)

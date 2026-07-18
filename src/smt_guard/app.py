@@ -19,7 +19,7 @@ from smt_guard.feedback import (
     SilentAnnouncementSink,
 )
 from smt_guard.importing import ConfigurationImportService
-from smt_guard.operator import OperatorSession
+from smt_guard.operator import LastOperatorStore, OperatorSession
 from smt_guard.platform import (
     RunIdGenerator,
     WindowsAudioSink,
@@ -105,7 +105,8 @@ def create_runtime(
         boms = SqliteBomRepository(connection)
         runs = SqliteProductionRunRepository(connection)
         audits = SqliteAuditRepository(connection)
-        operator_session = OperatorSession()
+        operator_store = LastOperatorStore(data_directory / "last_operator.txt")
+        operator_session = OperatorSession(operator_store.load())
         import_service = ConfigurationImportService(
             OpenpyxlWorkbookReader(),
             master_data,
@@ -134,7 +135,10 @@ def create_runtime(
             boms, operator_session.require, announcer=announcer
         )
         configuration_widget = ConfigurationManagementWidget(
-            configurations, operator_session.require, announcer=announcer
+            configurations,
+            operator_session.require,
+            announcer=announcer,
+            bom_repository=boms,
         )
         run_widget = ProductionRunManagementWidget(
             runs,
@@ -183,6 +187,11 @@ def create_runtime(
             scan_widget.interrupt_active_run("切换操作员")
 
         operator_widget.operator_changed.connect(operator_changed)
+        # Keep the preference store alive through the signal closure for the full UI lifetime.
+        def save_operator(operator: str) -> None:
+            operator_store.save(operator)
+
+        operator_widget.operator_changed.connect(save_operator)
     except Exception:
         connection.close()
         raise
@@ -297,7 +306,9 @@ def main(
     if smoke_test:
         runtime.close()
         return 0
-    runtime.window.show()
+    # Shop-floor terminals are normally dedicated displays; start maximized so the
+    # responsive page layouts can use the available screen without an extra click.
+    runtime.window.showMaximized()
     try:
         return application.exec()
     finally:

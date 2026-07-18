@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QBoxLayout
 
 from smt_guard.feedback import FeedbackTone, VoicePrompt
 from smt_guard.records import InMemoryAttemptRepository
@@ -271,6 +271,43 @@ class ScanWidgetTests(unittest.TestCase):
             self.fail("Missing attempt timestamp cell")
         self.assertEqual("2026-07-11 12:34", time_item.text())
         self.assertEqual(56, self.repository.list_for_run("RUN-1")[0].timestamp.second)
+
+    def test_reflows_primary_task_for_full_screen_and_medium_windows(self) -> None:
+        widget = self.make_widget([self.configuration])
+        widget.resize(1920, 900)
+        widget.show()
+        self.app.processEvents()
+
+        self.assertEqual(
+            QBoxLayout.Direction.TopToBottom,
+            widget.workflow_layout.direction(),
+        )
+        self.assertLess(
+            widget.hero_column.geometry().bottom(),
+            widget.overview_column.geometry().top(),
+        )
+        self.assertGreaterEqual(widget.hero_card.height(), 320)
+        self.assertLessEqual(widget.hero_card.height(), 400)
+        self.assertGreaterEqual(widget.scan_input.height(), 56)
+        self.assertLessEqual(widget.progress_card.height(), 72)
+        self.assertGreater(
+            widget.attempt_table.width(),
+            int(widget.workflow_host.width() * 0.9),
+        )
+        self.assertTrue(widget.history_button.isChecked())
+        self.assertTrue(widget.attempt_table.isVisible())
+
+        widget.resize(1180, 700)
+        self.app.processEvents()
+
+        self.assertEqual(
+            QBoxLayout.Direction.TopToBottom,
+            widget.workflow_layout.direction(),
+        )
+        self.assertLessEqual(widget.hero_card.height(), 290)
+        self.assertLessEqual(widget.progress_card.height(), 72)
+        self.assertFalse(widget.history_button.isChecked())
+        self.assertFalse(widget.attempt_table.isVisible())
 
 
 if __name__ == "__main__":

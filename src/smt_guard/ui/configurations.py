@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from smt_guard.bom import BomVersion
 from smt_guard.configuration import ConfigurationStatus, ProductConfigurationRecord
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.scan import ProductConfiguration
@@ -27,7 +28,11 @@ from smt_guard.ui.components import (
     set_feedback,
 )
 from smt_guard.ui.formatting import display_datetime
-from smt_guard.ui.tables import readable_item, set_column_widths
+from smt_guard.ui.tables import (
+    readable_item,
+    set_column_widths,
+    set_responsive_columns,
+)
 
 
 class ConfigurationRepository(Protocol):
@@ -60,6 +65,10 @@ class ConfigurationRepository(Protocol):
     ) -> ProductConfigurationRecord: ...
 
 
+class BomVersionLookup(Protocol):
+    def get_by_id(self, bom_id: int) -> BomVersion: ...
+
+
 class ConfigurationManagementWidget(QWidget):
     """Edit drafts and manage released station-configuration versions."""
 
@@ -73,11 +82,14 @@ class ConfigurationManagementWidget(QWidget):
         parent: QWidget | None = None,
         *,
         announcer: AnnouncementSink | None = None,
+        bom_repository: BomVersionLookup | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._operator_provider = operator_provider
         self._announcer = announcer or SilentAnnouncementSink()
+        self._bom_repository = bom_repository
+        self._linked_boms: dict[int, BomVersion | None] = {}
         self._records: list[ProductConfigurationRecord] = []
         self._build_ui()
         self.refresh()
@@ -93,10 +105,12 @@ class ConfigurationManagementWidget(QWidget):
         )
         filter_card = content_card(object_name="filterCard")
         filter_layout = QVBoxLayout(filter_card)
-        filter_layout.addWidget(section_heading("筛选配置", "按产品编码或版本定位"))
+        filter_layout.addWidget(
+            section_heading("筛选配置", "按产品编码、名称、规格或版本定位")
+        )
         top = QHBoxLayout()
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText("按产品或版本筛选")
+        self.filter_input.setPlaceholderText("按产品编码、名称、规格或版本筛选")
         self.filter_input.setClearButtonEnabled(True)
         self.refresh_button = QPushButton("刷新")
         top.addWidget(self.filter_input, 1)
@@ -105,6 +119,7 @@ class ConfigurationManagementWidget(QWidget):
         layout.addWidget(filter_card)
 
         splitter = QSplitter()
+        self.splitter = splitter
         list_card = content_card()
         list_layout = QVBoxLayout(list_card)
         list_heading = QHBoxLayout()
@@ -116,7 +131,7 @@ class ConfigurationManagementWidget(QWidget):
         list_layout.addLayout(list_heading)
         self.configuration_table = QTableWidget(0, 6)
         self.configuration_table.setHorizontalHeaderLabels(
-            ("产品", "版本", "状态", "BOM 版本 ID", "创建时间", "创建人")
+            ("产品编码", "产品名称", "规格", "配置版本", "状态", "BOM 版本")
         )
         self.configuration_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
@@ -127,16 +142,19 @@ class ConfigurationManagementWidget(QWidget):
         self.configuration_table.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        set_column_widths(self.configuration_table, (115, 170, 75, 105, 190, 120))
-        self.configuration_table.setColumnHidden(4, True)
-        self.configuration_table.setColumnHidden(5, True)
-        self.configuration_table.horizontalHeader().setStretchLastSection(True)
+        set_column_widths(self.configuration_table, (120, 120, 150, 130, 70, 130))
+        set_responsive_columns(
+            self.configuration_table,
+            stretch=(0, 1, 2, 3, 5),
+            compact=(4,),
+        )
         list_layout.addWidget(self.configuration_table, 1)
         splitter.addWidget(list_card)
         editor = content_card(object_name="detailCard")
         editor_layout = QVBoxLayout(editor)
         self.editor_label = QLabel("请选择配置")
         self.editor_label.setObjectName("sectionTitle")
+        self.editor_label.setWordWrap(True)
         editor_layout.addWidget(self.editor_label)
         summary = QHBoxLayout()
         self.configuration_status_chip = QLabel("未选择")
@@ -148,6 +166,10 @@ class ConfigurationManagementWidget(QWidget):
         summary.addWidget(self.assignment_count_chip)
         summary.addStretch(1)
         editor_layout.addLayout(summary)
+        self.edit_hint_label = QLabel("请选择配置")
+        self.edit_hint_label.setWordWrap(True)
+        set_feedback(self.edit_hint_label, "neutral", "请选择配置")
+        editor_layout.addWidget(self.edit_hint_label)
         self.import_button = QPushButton("前往导入配置")
         self.import_button.setProperty("actionRole", "primary")
         self.import_button.hide()
@@ -161,7 +183,7 @@ class ConfigurationManagementWidget(QWidget):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         set_column_widths(self.assignment_table, (125, 125, 220))
-        self.assignment_table.horizontalHeader().setStretchLastSection(True)
+        set_responsive_columns(self.assignment_table, stretch=(0, 1, 2))
         editor_layout.addWidget(self.assignment_table, 1)
         row_actions = QHBoxLayout()
         self.add_row_button = QPushButton("新增行")
@@ -184,21 +206,26 @@ class ConfigurationManagementWidget(QWidget):
         lifecycle_actions.addStretch(1)
         editor_layout.addLayout(lifecycle_actions)
         splitter.addWidget(editor)
-        splitter.setSizes((600, 600))
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 6)
+        splitter.setSizes((720, 1080))
         layout.addWidget(splitter, 1)
 
         version_card = content_card(object_name="actionCard")
         version_layout = QVBoxLayout(version_card)
         version_layout.addWidget(
-            section_heading("复制为新版本", "从当前配置复制草稿，再修改和校验")
+            section_heading("复制为草稿并编辑", "已启用版本不能直接修改，请先复制草稿")
         )
         lifecycle = QHBoxLayout()
         self.new_version_input = QLineEdit()
         self.new_version_input.setPlaceholderText("新版本号")
-        self.copy_button = QPushButton("复制新版本")
+        self.new_version_input.setMaximumWidth(420)
+        self.copy_button = QPushButton("复制为草稿并编辑")
         self.copy_button.setProperty("actionRole", "primary")
-        lifecycle.addWidget(self.new_version_input)
+        lifecycle.addWidget(self.new_version_input, 1)
         lifecycle.addWidget(self.copy_button)
+        lifecycle.addStretch(1)
         version_layout.addLayout(lifecycle)
         layout.addWidget(version_card)
         self.status_label = QLabel("就绪")
@@ -221,24 +248,30 @@ class ConfigurationManagementWidget(QWidget):
     def refresh(self) -> None:
         query = self.filter_input.text().strip().casefold()
         records = self._repository.list_all()
+        self._linked_boms.clear()
         self._records = [
             item
             for item in records
             if not query
-            or query in item.configuration.product_code.casefold()
-            or query in item.configuration.version.casefold()
+            or query in self._record_search_text(item)
         ]
         self.configuration_count_chip.setText(f"{len(self._records)} 个")
         self.configuration_table.setRowCount(len(self._records))
         for row, record in enumerate(self._records):
             configuration = record.configuration
+            bom = self._linked_bom(record)
+            product = None if bom is None else bom.document.product
             values = (
                 configuration.product_code,
+                "—" if product is None or not product.name else product.name,
+                (
+                    "—"
+                    if product is None or not product.specification
+                    else product.specification
+                ),
                 configuration.version,
                 self._status_text(record),
-                "" if configuration.bom_version_id is None else str(configuration.bom_version_id),
-                display_datetime(record.created_at),
-                record.created_by,
+                self._bom_label(configuration.bom_version_id, bom),
             )
             for column, value in enumerate(values):
                 self.configuration_table.setItem(row, column, readable_item(value))
@@ -254,6 +287,10 @@ class ConfigurationManagementWidget(QWidget):
             self.assignment_table.setRowCount(0)
             self.activate_button.setEnabled(False)
             self.disable_button.setEnabled(False)
+            self.add_row_button.setEnabled(False)
+            self.remove_row_button.setEnabled(False)
+            self.save_draft_button.setEnabled(False)
+            set_feedback(self.edit_hint_label, "neutral", "请选择配置")
 
     @Slot()
     def _render_selected(self) -> None:
@@ -261,15 +298,29 @@ class ConfigurationManagementWidget(QWidget):
         if record is None:
             self.activate_button.setEnabled(False)
             self.disable_button.setEnabled(False)
+            self.add_row_button.setEnabled(False)
+            self.remove_row_button.setEnabled(False)
+            self.save_draft_button.setEnabled(False)
+            set_feedback(self.edit_hint_label, "neutral", "请选择配置")
             return
         active = record.status is ConfigurationStatus.ACTIVE
         self.activate_button.setEnabled(not active)
         self.disable_button.setEnabled(active)
         configuration = record.configuration
+        bom = self._linked_bom(record)
+        product = None if bom is None else bom.document.product
+        product_name = "—" if product is None or not product.name else product.name
+        specification = (
+            "—"
+            if product is None or not product.specification
+            else product.specification
+        )
         self.editor_label.setText(
             f"{configuration.product_code}/{configuration.version} | "
-            f"{self._status_text(record)} | "
-            f"创建人 {record.created_by}"
+            f"{self._status_text(record)}\n"
+            f"产品：{product_name} | 规格：{specification} | "
+            f"BOM：{self._bom_label(configuration.bom_version_id, bom)} | "
+            f"创建：{display_datetime(record.created_at)} by {record.created_by}"
         )
         assignments = sorted(configuration.assignments.items())
         self.configuration_status_chip.setText(self._status_text(record))
@@ -292,6 +343,52 @@ class ConfigurationManagementWidget(QWidget):
         self.add_row_button.setEnabled(editable)
         self.remove_row_button.setEnabled(editable)
         self.save_draft_button.setEnabled(editable)
+        locked_reason = "已启用或历史版本不能直接修改，请先复制为草稿并编辑"
+        for button in (
+            self.add_row_button,
+            self.remove_row_button,
+            self.save_draft_button,
+        ):
+            button.setToolTip("" if editable else locked_reason)
+        if editable:
+            set_feedback(
+                self.edit_hint_label,
+                "success",
+                "当前为草稿，可新增、删除和保存站位物料关系；校验通过后再启用。",
+            )
+        else:
+            set_feedback(
+                self.edit_hint_label,
+                "warning",
+                "当前为已启用或历史版本，为保证生产追溯不能直接修改。"
+                "请在下方填写新版本号，再点击“复制为草稿并编辑”。",
+            )
+
+    def _linked_bom(self, record: ProductConfigurationRecord) -> BomVersion | None:
+        bom_id = record.configuration.bom_version_id
+        if bom_id is None or self._bom_repository is None:
+            return None
+        if bom_id not in self._linked_boms:
+            try:
+                self._linked_boms[bom_id] = self._bom_repository.get_by_id(bom_id)
+            except LookupError:
+                self._linked_boms[bom_id] = None
+        return self._linked_boms[bom_id]
+
+    def _record_search_text(self, record: ProductConfigurationRecord) -> str:
+        configuration = record.configuration
+        bom = self._linked_bom(record)
+        product = None if bom is None else bom.document.product
+        product_text = "" if product is None else f"{product.name} {product.specification}"
+        return f"{configuration.product_code} {configuration.version} {product_text}".casefold()
+
+    @staticmethod
+    def _bom_label(bom_id: int | None, bom: BomVersion | None) -> str:
+        if bom is not None:
+            return bom.version
+        if bom_id is None:
+            return "未关联"
+        return f"ID {bom_id}"
 
     def _selected(self) -> ProductConfigurationRecord | None:
         row = self.configuration_table.currentRow()

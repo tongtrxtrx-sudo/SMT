@@ -23,9 +23,13 @@ from PySide6.QtWidgets import (
 from smt_guard.bom import BomDocument
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.importing import ImportResult
-from smt_guard.ui.components import PageHeader, prepare_table
+from smt_guard.ui.components import PageHeader, prepare_table, set_feedback
 from smt_guard.ui.errors import operator_error_message
-from smt_guard.ui.tables import readable_item, set_column_widths
+from smt_guard.ui.tables import (
+    readable_item,
+    set_column_widths,
+    set_responsive_columns,
+)
 
 
 class WorkbookDropZone(QFrame):
@@ -129,9 +133,14 @@ class ConfigurationImportWidget(QWidget):
                 "按顺序导入 BOM 与站位表，系统校验通过后才会启用产品配置。",
             )
         )
+        self.workflow_shell = QWidget()
+        self.workflow_shell.setMaximumWidth(1280)
+        workflow_layout = QVBoxLayout(self.workflow_shell)
+        workflow_layout.setContentsMargins(0, 0, 0, 0)
+        workflow_layout.setSpacing(10)
         self.step_indicator = QLabel()
-        self.step_indicator.setStyleSheet("font-size: 17px; font-weight: 600; padding: 8px;")
-        layout.addWidget(self.step_indicator)
+        self.step_indicator.setObjectName("stepIndicator")
+        workflow_layout.addWidget(self.step_indicator)
 
         self.bom_step = QGroupBox("第一步：导入 BOM")
         bom_layout = QVBoxLayout(self.bom_step)
@@ -156,7 +165,7 @@ class ConfigurationImportWidget(QWidget):
         bom_actions.addStretch(1)
         bom_actions.addWidget(self.bom_import_button)
         bom_layout.addLayout(bom_actions)
-        layout.addWidget(self.bom_step)
+        workflow_layout.addWidget(self.bom_step)
 
         self.station_step = QGroupBox("第二步：导入站位表")
         station_layout = QVBoxLayout(self.station_step)
@@ -187,7 +196,7 @@ class ConfigurationImportWidget(QWidget):
         station_actions.addStretch(1)
         station_actions.addWidget(self.review_button)
         station_layout.addLayout(station_actions)
-        layout.addWidget(self.station_step)
+        workflow_layout.addWidget(self.station_step)
 
         self.validation_step = QGroupBox("第三步：校验并启用")
         validation_layout = QVBoxLayout(self.validation_step)
@@ -199,10 +208,14 @@ class ConfigurationImportWidget(QWidget):
         self.bom_number_label = QLabel("BOM：-")
         self.material_count_label = QLabel("BOM 组件：0")
         self.assignment_count_label = QLabel("站位分配：0")
-        summary.addWidget(self.product_label)
-        summary.addWidget(self.bom_number_label)
-        summary.addWidget(self.material_count_label)
-        summary.addWidget(self.assignment_count_label)
+        for label in (
+            self.product_label,
+            self.bom_number_label,
+            self.material_count_label,
+            self.assignment_count_label,
+        ):
+            label.setProperty("metricChip", True)
+            summary.addWidget(label)
         summary.addStretch(1)
         validation_layout.addLayout(summary)
 
@@ -212,7 +225,7 @@ class ConfigurationImportWidget(QWidget):
         self.assignment_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.assignment_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         set_column_widths(self.assignment_table, (150, 150, 240))
-        self.assignment_table.horizontalHeader().setStretchLastSection(True)
+        set_responsive_columns(self.assignment_table, stretch=(0, 1, 2))
         validation_layout.addWidget(self.assignment_table, 1)
 
         validation_actions = QHBoxLayout()
@@ -223,11 +236,16 @@ class ConfigurationImportWidget(QWidget):
         validation_actions.addStretch(1)
         validation_actions.addWidget(self.station_import_button)
         validation_layout.addLayout(validation_actions)
-        layout.addWidget(self.validation_step, 1)
+        workflow_layout.addWidget(self.validation_step, 1)
 
         self.status_label = QLabel("请先导入 BOM，再导入站位表")
         self.status_label.setObjectName("feedbackLabel")
-        layout.addWidget(self.status_label)
+        workflow_layout.addWidget(self.status_label)
+        centered = QHBoxLayout()
+        centered.addStretch(1)
+        centered.addWidget(self.workflow_shell, 24, Qt.AlignmentFlag.AlignTop)
+        centered.addStretch(1)
+        layout.addLayout(centered, 1)
 
     def _connect_signals(self) -> None:
         self.bom_browse_button.clicked.connect(self._select_bom)
@@ -349,14 +367,10 @@ class ConfigurationImportWidget(QWidget):
             target.setText(selected)
 
     def _show_success(self, message: str) -> None:
-        self.status_label.setProperty("feedbackState", "success")
-        self.status_label.setStyleSheet("color: #18794e;")
-        self.status_label.setText(message)
+        set_feedback(self.status_label, "success", message)
 
     def _show_error(self, message: str) -> None:
-        self.status_label.setProperty("feedbackState", "error")
-        self.status_label.setStyleSheet("color: #b42318;")
-        self.status_label.setText(message)
+        set_feedback(self.status_label, "error", message)
 
     def _set_step(self, step: int) -> None:
         self._current_step = step
@@ -370,7 +384,9 @@ class ConfigurationImportWidget(QWidget):
         }
         self.step_indicator.setText(labels[step])
         self.step_indicator.setStyleSheet(
-            "font-size: 17px; font-weight: 600; padding: 8px; color: #175cd3;"
+            "font-size: 17px; font-weight: 700; padding: 12px 16px; "
+            "color: #175cd3; background-color: #eff8ff; "
+            "border: 1px solid #b2ddff; border-radius: 10px;"
         )
 
     @staticmethod

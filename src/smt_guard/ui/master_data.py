@@ -4,8 +4,10 @@ from collections.abc import Callable
 from typing import Protocol
 
 from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractSpinBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -17,6 +19,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -29,7 +32,7 @@ from smt_guard.ui.components import (
     section_heading,
     set_feedback,
 )
-from smt_guard.ui.tables import set_column_widths
+from smt_guard.ui.tables import set_column_widths, set_responsive_columns
 
 
 class MasterDataRepository(Protocol):
@@ -130,6 +133,62 @@ class MasterDataRepository(Protocol):
         ...
 
 
+class LargeStepSpinBox(QSpinBox):
+    """Numeric input with explicit shop-floor-sized decrement/increment buttons."""
+
+    BUTTON_WIDTH = 38
+
+    def __init__(self, *, minimum_digits: int = 1) -> None:
+        self._minimum_digits = max(1, minimum_digits)
+        super().__init__()
+        self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+
+        self.decrement_button = QToolButton(self)
+        self.decrement_button.setObjectName("spinDecrement")
+        self.decrement_button.setText("−")
+        self.decrement_button.setToolTip("减少 1")
+        self.decrement_button.setAccessibleName("减少 1")
+
+        self.increment_button = QToolButton(self)
+        self.increment_button.setObjectName("spinIncrement")
+        self.increment_button.setText("+")
+        self.increment_button.setToolTip("增加 1")
+        self.increment_button.setAccessibleName("增加 1")
+
+        for button in (self.decrement_button, self.increment_button):
+            button.setAutoRepeat(True)
+            button.setAutoRepeatDelay(350)
+            button.setAutoRepeatInterval(90)
+
+        self.decrement_button.clicked.connect(self.stepDown)
+        self.increment_button.clicked.connect(self.stepUp)
+
+    def textFromValue(self, value: int) -> str:  # noqa: N802
+        """Keep configured leading zeroes without changing the numeric value."""
+        return str(value).zfill(self._minimum_digits)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        """Keep both buttons large and aligned at the right edge."""
+        super().resizeEvent(event)
+        button_height = max(self.height() - 4, 1)
+        increment_left = self.width() - self.BUTTON_WIDTH - 2
+        decrement_left = increment_left - self.BUTTON_WIDTH - 2
+        self.decrement_button.setGeometry(
+            decrement_left,
+            2,
+            self.BUTTON_WIDTH,
+            button_height,
+        )
+        self.increment_button.setGeometry(
+            increment_left,
+            2,
+            self.BUTTON_WIDTH,
+            button_height,
+        )
+        self.decrement_button.raise_()
+        self.increment_button.raise_()
+
+
 class DeviceStationWidget(QWidget):
     """Manage placement devices and their physical feeder stations."""
 
@@ -160,9 +219,13 @@ class DeviceStationWidget(QWidget):
         )
 
         splitter = QSplitter()
+        self.splitter = splitter
         splitter.addWidget(self._build_device_panel())
         splitter.addWidget(self._build_station_panel())
-        splitter.setSizes([480, 620])
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([900, 900])
         root.addWidget(splitter, 1)
 
         self.status_label = QLabel("就绪")
@@ -191,7 +254,11 @@ class DeviceStationWidget(QWidget):
 
         self.device_table = self._table(("设备编码", "设备名称", "产线", "状态"))
         set_column_widths(self.device_table, (105, 150, 105, 70))
-        self.device_table.horizontalHeader().setStretchLastSection(True)
+        set_responsive_columns(
+            self.device_table,
+            stretch=(0, 1, 2),
+            compact=(3,),
+        )
         layout.addWidget(self.device_table, 1)
 
         layout.addWidget(section_heading("设备信息", "修改现有设备，或输入新编码创建设备"))
@@ -245,7 +312,11 @@ class DeviceStationWidget(QWidget):
 
         self.station_table = self._table(("站位编码", "站位名称", "状态", "已引用"))
         set_column_widths(self.station_table, (110, 170, 70, 70))
-        self.station_table.horizontalHeader().setStretchLastSection(True)
+        set_responsive_columns(
+            self.station_table,
+            stretch=(0, 1),
+            compact=(2, 3),
+        )
         layout.addWidget(self.station_table, 1)
 
         layout.addWidget(section_heading("站位信息", "新增或修改当前设备下的单个站位"))
@@ -280,7 +351,7 @@ class DeviceStationWidget(QWidget):
         self.bulk_group.setVisible(False)
         bulk_form = QFormLayout(self.bulk_group)
         self.bulk_prefix_input = QLineEdit("F-")
-        self.bulk_start_input = self._spin_box(1, 9999, 1)
+        self.bulk_start_input = self._spin_box(1, 9999, 1, minimum_digits=2)
         self.bulk_end_input = self._spin_box(1, 9999, 60)
         self.bulk_width_input = self._spin_box(1, 6, 2)
         self.bulk_add_button = QPushButton("批量创建")
@@ -714,8 +785,16 @@ class DeviceStationWidget(QWidget):
             table.setItem(row, column, QTableWidgetItem(value))
 
     @staticmethod
-    def _spin_box(minimum: int, maximum: int, value: int) -> QSpinBox:
-        spin_box = QSpinBox()
+    def _spin_box(
+        minimum: int,
+        maximum: int,
+        value: int,
+        *,
+        minimum_digits: int = 1,
+    ) -> LargeStepSpinBox:
+        spin_box = LargeStepSpinBox(minimum_digits=minimum_digits)
         spin_box.setRange(minimum, maximum)
         spin_box.setValue(value)
+        spin_box.setAccelerated(True)
+        spin_box.setMinimumHeight(42)
         return spin_box

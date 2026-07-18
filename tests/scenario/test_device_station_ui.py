@@ -4,10 +4,13 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from smt_guard.operator import OperatorSession
 from smt_guard.sqlite import SqliteAuditRepository, SqliteDatabase, SqliteMasterDataRepository
+from smt_guard.ui.main_window import APPLICATION_STYLE
 from smt_guard.ui.master_data import DeviceStationWidget
 
 
@@ -81,6 +84,9 @@ class DeviceStationWidgetTests(unittest.TestCase):
     def test_adds_single_and_bulk_stations_for_selected_device(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")
         widget = self.make_widget()
+        self.assertEqual(1, widget.bulk_start_input.value())
+        self.assertEqual("01", widget.bulk_start_input.text())
+        self.assertEqual(2, widget.bulk_width_input.value())
         widget.station_code_input.setText(" F-01 ")
 
         widget.add_station_button.click()
@@ -100,6 +106,38 @@ class DeviceStationWidgetTests(unittest.TestCase):
         self.assertTrue(widget.disable_station_button.isEnabled())
         self.assertIn("2 个站位", widget.status_label.text())
 
+    def test_bulk_number_buttons_have_large_click_targets_and_change_values(self) -> None:
+        self.repository.add_device("SMT-01", "Machine 1", "Line A")
+        widget = self.make_widget()
+        widget.setStyleSheet(APPLICATION_STYLE)
+        widget.resize(1180, 760)
+        widget.show()
+        widget.bulk_toggle_button.click()
+        self.app.processEvents()
+
+        for spin_box in (
+            widget.bulk_start_input,
+            widget.bulk_end_input,
+            widget.bulk_width_input,
+        ):
+            self.assertEqual("+", spin_box.increment_button.text())
+            self.assertEqual("−", spin_box.decrement_button.text())
+            self.assertGreaterEqual(spin_box.increment_button.width(), 34)
+            self.assertGreaterEqual(spin_box.increment_button.height(), 34)
+            self.assertGreaterEqual(spin_box.decrement_button.width(), 34)
+            self.assertGreaterEqual(spin_box.decrement_button.height(), 34)
+            original = spin_box.value()
+            QTest.mouseClick(
+                spin_box.increment_button,
+                Qt.MouseButton.LeftButton,
+            )
+            self.assertEqual(original + 1, spin_box.value())
+            QTest.mouseClick(
+                spin_box.decrement_button,
+                Qt.MouseButton.LeftButton,
+            )
+            self.assertEqual(original, spin_box.value())
+
     def test_device_selection_refreshes_station_context(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")
         self.repository.add_device("SMT-02", "Machine 2", "Line A")
@@ -113,6 +151,22 @@ class DeviceStationWidgetTests(unittest.TestCase):
         assert station_code is not None
         self.assertIn("SMT-02", widget.selected_device_label.text())
         self.assertEqual("R-01", station_code.text())
+
+    def test_displays_station_codes_in_natural_numeric_order(self) -> None:
+        self.repository.add_device("SMT-01", "Machine 1", "Line A")
+        for code in ("F-10", "F-2", "F-1", "F-20", "F-3"):
+            self.repository.add_station("SMT-01", code)
+        widget = self.make_widget()
+
+        displayed_codes: list[str] = []
+        for row in range(widget.station_table.rowCount()):
+            item = widget.station_table.item(row, 0)
+            assert item is not None
+            displayed_codes.append(item.text())
+        self.assertEqual(
+            ["F-1", "F-2", "F-3", "F-10", "F-20"],
+            displayed_codes,
+        )
 
     def test_disables_entities_without_exposing_delete_actions(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")
