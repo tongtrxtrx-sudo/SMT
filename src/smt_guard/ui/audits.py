@@ -33,6 +33,9 @@ from smt_guard.ui.components import (
 from smt_guard.ui.date_range import DateRangeFilter
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import (
+    UiLayoutStore,
+    enable_splitter_layout,
+    enable_table_layout,
     readable_item,
     set_column_widths,
     set_responsive_columns,
@@ -83,10 +86,12 @@ class AuditLogWidget(QWidget):
         parent: QWidget | None = None,
         *,
         clock: Callable[[], datetime] | None = None,
+        layout_store: UiLayoutStore | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._layout_store = layout_store
         self._entries: list[AuditEntry] = []
         self._build_ui()
 
@@ -156,6 +161,11 @@ class AuditLogWidget(QWidget):
             stretch=(1, 2, 3),
             compact=(0, 4, 5),
         )
+        enable_table_layout(
+            self.audit_table,
+            "audits/list",
+            self._layout_store,
+        )
         self.audit_stack.addWidget(self.audit_table)
         splitter.addWidget(self.audit_stack)
 
@@ -184,6 +194,7 @@ class AuditLogWidget(QWidget):
         splitter.setStretchFactor(0, 6)
         splitter.setStretchFactor(1, 4)
         splitter.setSizes((1080, 720))
+        enable_splitter_layout(splitter, "audits/main", self._layout_store)
         layout.addWidget(splitter, 1)
         self.status_label = QLabel("尚未查询；打开本页后将自动加载最新审计日志")
         set_feedback(

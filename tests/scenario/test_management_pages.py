@@ -109,6 +109,11 @@ class ManagementPageTests(unittest.TestCase):
         widget.show()
         self.app.processEvents()
 
+        query_card = widget.product_filter.parentWidget()
+        assert query_card is not None
+        self.assertEqual(760, query_card.minimumWidth())
+        self.assertEqual(980, query_card.maximumWidth())
+
         self.assertEqual(2, widget.version_table.rowCount())
         self.assertEqual(
             {"当前版本", "历史版本"},
@@ -136,11 +141,11 @@ class ManagementPageTests(unittest.TestCase):
         )
         self.assertEqual(0, widget.material_table.horizontalScrollBar().maximum())
         self.assertEqual(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
             widget.version_table.horizontalScrollBarPolicy(),
         )
         self.assertEqual(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
             widget.material_table.horizontalScrollBarPolicy(),
         )
         widget.compare_button.click()
@@ -148,6 +153,44 @@ class ManagementPageTests(unittest.TestCase):
         widget.version_table.selectRow(1)
         self.assertIn("当前 BOM 版本", widget.lifecycle_hint_label.text())
         self.assertEqual([], announcer.prompts)
+
+    def test_bom_comparison_only_offers_versions_of_the_same_product(self) -> None:
+        first = self.import_bom("V1", "M-1")
+        self.import_bom("V2", "M-2")
+        other_source = self.directory / "other.xlsx"
+        other_source.write_bytes(b"other")
+        repository = SqliteBomRepository(self.connection)
+        repository.import_document(
+            BomDocument(
+                Product("OTHER-001", "BOM-O", "Other BOM", "Other", "Spec"),
+                {"O-1": Material("O-1", "Other", "0603", "1", "Other")},
+            ),
+            other_source,
+            version="O1",
+            operator="OP-UI",
+            imported_at=datetime(2026, 7, 14, 10, 0, tzinfo=UTC),
+        )
+        widget = BomManagementWidget(repository, self.session.require)
+        self.addCleanup(widget.close)
+
+        first_index = widget.compare_first.findData(first.id)
+        self.assertGreaterEqual(first_index, 0)
+        widget.compare_first.setCurrentIndex(first_index)
+        self.assertEqual(1, widget.compare_second.count())
+        self.assertTrue(
+            all(
+                widget.compare_second.itemText(index).startswith("501000087 / ")
+                for index in range(widget.compare_second.count())
+            )
+        )
+        self.assertTrue(widget.compare_button.isEnabled())
+
+        other_index = widget.compare_first.findText("OTHER-001 / O1")
+        self.assertGreaterEqual(other_index, 0)
+        widget.compare_first.setCurrentIndex(other_index)
+        self.assertEqual(0, widget.compare_second.count())
+        self.assertFalse(widget.compare_button.isEnabled())
+        self.assertIn("暂无其他版本", widget.compare_label.text())
 
     def test_configuration_page_copies_edits_and_releases_new_version(self) -> None:
         repository = SqliteProductConfigurationRepository(self.connection)
@@ -170,6 +213,10 @@ class ManagementPageTests(unittest.TestCase):
             bom_repository=boms,
         )
         self.addCleanup(widget.close)
+        filter_card = widget.filter_input.parentWidget()
+        assert filter_card is not None
+        self.assertEqual(760, filter_card.minimumWidth())
+        self.assertEqual(980, filter_card.maximumWidth())
         version_item = widget.configuration_table.item(0, 3)
         assert version_item is not None
         self.assertEqual(version_item.text(), version_item.toolTip())
@@ -250,10 +297,12 @@ class ManagementPageTests(unittest.TestCase):
         product_version_header = run_widget.run_table.horizontalHeaderItem(1)
         assert product_version_header is not None
         self.assertEqual("产品 / 版本", product_version_header.text())
+        self.assertEqual("查询运行", run_widget.query_button.text())
+        self.assertLess(run_widget.query_button.x(), int(run_widget.width() * 0.75))
         self.assertGreaterEqual(run_widget.run_table.columnWidth(0), 160)
         self.assertEqual(0, run_widget.run_table.horizontalScrollBar().maximum())
         self.assertEqual(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
             run_widget.run_table.horizontalScrollBarPolicy(),
         )
         self.assertIn("更新于 12:00", run_widget.status_label.text())
@@ -264,7 +313,7 @@ class ManagementPageTests(unittest.TestCase):
         self.assertEqual(["RUN-UI"], resumed)
         self.assertEqual(1, run_widget.station_table.rowCount())
         self.assertEqual(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
             run_widget.station_table.horizontalScrollBarPolicy(),
         )
         self.assertEqual(0, run_widget.station_table.horizontalScrollBar().maximum())
@@ -431,8 +480,8 @@ class ManagementPageTests(unittest.TestCase):
         self.assertFalse(bom_widget.import_button.isHidden())
         bom_widget.import_button.click()
         self.assertEqual([True], bom_import_requests)
-        bom_widget.compare_button.click()
-        self.assertIn("请选择", bom_widget.status_label.text())
+        self.assertFalse(bom_widget.compare_button.isEnabled())
+        self.assertIn("暂无其他版本", bom_widget.compare_label.text())
 
         config_widget = ConfigurationManagementWidget(
             SqliteProductConfigurationRepository(self.connection),

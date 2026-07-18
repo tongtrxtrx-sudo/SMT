@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QBoxLayout
 
 from smt_guard.feedback import FeedbackTone, VoicePrompt
@@ -91,6 +92,28 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertTrue(widget.selection_card.isHidden())
         self.assertEqual("0 / 1", widget.progress_count_label.text())
         self.assertEqual([VoicePrompt.SCAN_DEVICE], self.announcements.prompts)
+
+    def test_configuration_selector_supports_typed_contains_search(self) -> None:
+        second = ProductConfiguration(
+            "501000099",
+            "V2",
+            {("SMT-02", "F-02"): "013000099"},
+        )
+        widget = self.make_widget([self.configuration, second])
+
+        self.assertTrue(widget.configuration_combo.isEditable())
+        completer = widget.configuration_combo.completer()
+        assert completer is not None
+        self.assertEqual(Qt.MatchFlag.MatchContains, completer.filterMode())
+
+        widget.configuration_combo.setEditText("000099")
+        self.assertFalse(widget.start_button.isEnabled())
+        self.assertIn("选择匹配配置", widget.product_summary_label.text())
+
+        widget.configuration_combo.setEditText("501000099 / V2")
+        self.assertTrue(widget.start_button.isEnabled())
+        widget.start_button.click()
+        self.assertIn("501000099 / V2", widget.product_summary_label.text())
 
     def test_empty_configuration_guides_operator_to_import(self) -> None:
         widget = self.make_widget([])

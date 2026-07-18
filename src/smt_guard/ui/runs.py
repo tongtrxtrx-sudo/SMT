@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Protocol
 
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -36,6 +35,9 @@ from smt_guard.ui.components import (
 from smt_guard.ui.date_range import DateRangeFilter
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import (
+    UiLayoutStore,
+    enable_splitter_layout,
+    enable_table_layout,
     readable_item,
     set_column_widths,
     set_responsive_columns,
@@ -77,14 +79,15 @@ class ProductionRunManagementWidget(QWidget):
         exporter: RunExporter | None = None,
         announcer: AnnouncementSink | None = None,
         clock: Callable[[], datetime] | None = None,
+        layout_store: UiLayoutStore | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._exporter = exporter
         self._announcer = announcer or SilentAnnouncementSink()
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._layout_store = layout_store
         self._runs: list[ProductionRun] = []
-        self._wide_layout: bool | None = None
         self._build_ui()
         self.refresh()
 
@@ -107,15 +110,16 @@ class ProductionRunManagementWidget(QWidget):
         self.operator_input.setPlaceholderText("操作员")
         self.status_combo = QComboBox()
         self.status_combo.addItems(("全部状态", "运行中", "已完成", "已中断"))
-        self.query_button = QPushButton("查询")
+        self.query_button = QPushButton("查询运行")
         self.query_button.setProperty("actionRole", "primary")
+        self.query_button.setMinimumWidth(110)
         self.query_input.setMaximumWidth(560)
         self.operator_input.setMaximumWidth(320)
         filters.addWidget(self.query_input, 2)
         filters.addWidget(self.operator_input, 1)
         filters.addWidget(self.status_combo)
-        filters.addStretch(1)
         filters.addWidget(self.query_button)
+        filters.addStretch(1)
         filter_layout.addLayout(filters)
         self.date_range = DateRangeFilter(clock=self._clock, default_days=7)
         self.started_from_input = self.date_range.started_from_input
@@ -166,6 +170,7 @@ class ProductionRunManagementWidget(QWidget):
             stretch=(1,),
             compact=(2, 3, 4),
         )
+        enable_table_layout(self.run_table, "runs/list", self._layout_store)
         run_list_layout.addWidget(self.run_table, 1)
         splitter.addWidget(run_list_card)
         right = QFrame()
@@ -209,6 +214,11 @@ class ProductionRunManagementWidget(QWidget):
             stretch=(0, 1, 2, 4),
             compact=(3,),
         )
+        enable_table_layout(
+            self.station_table,
+            "runs/stations",
+            self._layout_store,
+        )
         self.detail_tabs.addTab(self.station_table, "站位进度")
         attempts_page = QWidget()
         attempts_layout = QVBoxLayout(attempts_page)
@@ -228,6 +238,11 @@ class ProductionRunManagementWidget(QWidget):
             stretch=(0, 1, 2, 3, 4),
             compact=(5, 6),
         )
+        enable_table_layout(
+            self.attempt_table,
+            "runs/attempts",
+            self._layout_store,
+        )
         attempts_layout.addWidget(self.attempt_table, 1)
         self.detail_tabs.addTab(attempts_page, "扫码记录")
         right_layout.addWidget(self.detail_tabs, 1)
@@ -245,6 +260,7 @@ class ProductionRunManagementWidget(QWidget):
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 6)
         splitter.setSizes((720, 1080))
+        enable_splitter_layout(splitter, "runs/main", self._layout_store)
         layout.addWidget(splitter, 1)
 
         actions = QHBoxLayout()
@@ -260,6 +276,7 @@ class ProductionRunManagementWidget(QWidget):
         self.query_button.clicked.connect(self.refresh)
         self.refresh_button.clicked.connect(self.refresh)
         self.query_input.returnPressed.connect(self.refresh)
+        self.operator_input.returnPressed.connect(self.refresh)
         self.date_range.range_selected.connect(self.refresh)
         self.run_table.itemSelectionChanged.connect(self._render_selected)
         self.start_button.clicked.connect(self.start_requested.emit)
@@ -267,18 +284,6 @@ class ProductionRunManagementWidget(QWidget):
         self.interrupt_button.clicked.connect(self._interrupt)
         self.view_records_button.clicked.connect(self._view_records)
         self.export_button.clicked.connect(self._export)
-
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
-        """Give the detail workspace more room only when the window is genuinely wide."""
-        super().resizeEvent(event)
-        wide = event.size().width() >= 1500
-        if wide == self._wide_layout:
-            return
-        self._wide_layout = wide
-        available = max(event.size().width() - 32, 1)
-        list_ratio = 0.42 if wide else 0.62
-        list_width = int(available * list_ratio)
-        self.splitter.setSizes((list_width, available - list_width))
 
     @Slot()
     def refresh(self) -> None:

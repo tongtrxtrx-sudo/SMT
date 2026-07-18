@@ -44,6 +44,7 @@ from smt_guard.ui.operator import OperatorSessionWidget
 from smt_guard.ui.records import RecordQueryWidget
 from smt_guard.ui.runs import ProductionRunManagementWidget
 from smt_guard.ui.scanning import ScanWidget
+from smt_guard.ui.tables import UiLayoutStore
 from smt_guard.xlsx_reader import OpenpyxlWorkbookReader
 
 
@@ -107,6 +108,7 @@ def create_runtime(
         audits = SqliteAuditRepository(connection)
         operator_store = LastOperatorStore(data_directory / "last_operator.txt")
         operator_session = OperatorSession(operator_store.load())
+        layout_store = UiLayoutStore(data_directory / "ui_layout.json")
         import_service = ConfigurationImportService(
             OpenpyxlWorkbookReader(),
             master_data,
@@ -118,9 +120,15 @@ def create_runtime(
         announcer = announcements or SilentAnnouncementSink()
         operator_widget = OperatorSessionWidget(operator_session, announcer=announcer)
         master_data_widget = DeviceStationWidget(
-            master_data, operator_provider=operator_session.require
+            master_data,
+            operator_provider=operator_session.require,
+            layout_store=layout_store,
         )
-        import_widget = ConfigurationImportWidget(import_service, announcer=announcer)
+        import_widget = ConfigurationImportWidget(
+            import_service,
+            announcer=announcer,
+            layout_store=layout_store,
+        )
         scan_widget = ScanWidget(
             configurations,
             runs,
@@ -130,26 +138,35 @@ def create_runtime(
             runs=runs,
             operator_provider=operator_session.require,
             announcer=announcer,
+            layout_store=layout_store,
         )
         bom_widget = BomManagementWidget(
-            boms, operator_session.require, announcer=announcer
+            boms,
+            operator_session.require,
+            announcer=announcer,
+            layout_store=layout_store,
         )
         configuration_widget = ConfigurationManagementWidget(
             configurations,
             operator_session.require,
             announcer=announcer,
             bom_repository=boms,
+            layout_store=layout_store,
         )
         run_widget = ProductionRunManagementWidget(
             runs,
             exporter=CsvRecordExporter(runs),
             announcer=announcer,
             clock=clock,
+            layout_store=layout_store,
         )
         records_widget = RecordQueryWidget(
-            runs, CsvRecordExporter(runs), announcer=announcer
+            runs,
+            CsvRecordExporter(runs),
+            announcer=announcer,
+            layout_store=layout_store,
         )
-        audit_widget = AuditLogWidget(audits, clock=clock)
+        audit_widget = AuditLogWidget(audits, clock=clock, layout_store=layout_store)
         import_widget.import_completed.connect(scan_widget.refresh_configurations)
         import_widget.import_completed.connect(configuration_widget.refresh)
         import_widget.bom_imported.connect(bom_widget.refresh)

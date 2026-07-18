@@ -26,6 +26,8 @@ from smt_guard.importing import ImportResult
 from smt_guard.ui.components import PageHeader, prepare_table, set_feedback
 from smt_guard.ui.errors import operator_error_message
 from smt_guard.ui.tables import (
+    UiLayoutStore,
+    enable_table_layout,
     readable_item,
     set_column_widths,
     set_responsive_columns,
@@ -114,10 +116,12 @@ class ConfigurationImportWidget(QWidget):
         parent: QWidget | None = None,
         *,
         announcer: AnnouncementSink | None = None,
+        layout_store: UiLayoutStore | None = None,
     ) -> None:
         super().__init__(parent)
         self._workflow = workflow
         self._announcer = announcer or SilentAnnouncementSink()
+        self._layout_store = layout_store
         self._current_step = 1
         self._bom_document: BomDocument | None = None
         self._build_ui()
@@ -226,6 +230,11 @@ class ConfigurationImportWidget(QWidget):
         self.assignment_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         set_column_widths(self.assignment_table, (150, 150, 240))
         set_responsive_columns(self.assignment_table, stretch=(0, 1, 2))
+        enable_table_layout(
+            self.assignment_table,
+            "import/assignments",
+            self._layout_store,
+        )
         validation_layout.addWidget(self.assignment_table, 1)
 
         validation_actions = QHBoxLayout()

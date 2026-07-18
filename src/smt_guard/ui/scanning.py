@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QBoxLayout,
     QComboBox,
+    QCompleter,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -36,7 +37,12 @@ from smt_guard.records import Attempt
 from smt_guard.run import AttemptSink, ProductionRun, RunPersistence, VerificationRun
 from smt_guard.scan import ProductConfiguration, ScanStep
 from smt_guard.ui.formatting import display_datetime
-from smt_guard.ui.tables import set_column_widths, set_responsive_columns
+from smt_guard.ui.tables import (
+    UiLayoutStore,
+    enable_table_layout,
+    set_column_widths,
+    set_responsive_columns,
+)
 
 
 class ConfigurationSource(Protocol):
@@ -82,6 +88,7 @@ class ScanWidget(QWidget):
         operator: str = "SYSTEM",
         operator_provider: Callable[[], str] | None = None,
         announcer: AnnouncementSink | None = None,
+        layout_store: UiLayoutStore | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -94,6 +101,7 @@ class ScanWidget(QWidget):
         self._operator = operator.strip() or "SYSTEM"
         self._operator_provider = operator_provider
         self._announcer = announcer or SilentAnnouncementSink()
+        self._layout_store = layout_store
         self._configurations: list[ProductConfiguration] = []
         self._run: VerificationRun | None = None
         self._build_ui()
@@ -114,6 +122,18 @@ class ScanWidget(QWidget):
         selection_layout.setContentsMargins(14, 10, 14, 10)
         selection_layout.addWidget(QLabel("产品配置"))
         self.configuration_combo = QComboBox()
+        self.configuration_combo.setEditable(True)
+        self.configuration_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.configuration_combo.setToolTip("输入产品编码或配置版本，选择匹配的产品配置")
+        configuration_editor = self.configuration_combo.lineEdit()
+        if configuration_editor is not None:
+            configuration_editor.setPlaceholderText("输入产品编码或配置版本查询")
+            configuration_editor.setClearButtonEnabled(True)
+        completer = self.configuration_combo.completer()
+        if completer is not None:
+            completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+            completer.setFilterMode(Qt.MatchFlag.MatchContains)
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.configuration_combo.setMinimumWidth(260)
         self.configuration_combo.setMaximumWidth(900)
         self.start_button = QPushButton("开始新运行")
@@ -261,6 +281,11 @@ class ScanWidget(QWidget):
             stretch=(0, 1, 2, 3, 4),
             compact=(5, 6),
         )
+        enable_table_layout(
+            self.attempt_table,
+            "scan/attempts",
+            self._layout_store,
+        )
         self.attempt_table.setVisible(False)
         history_layout.addWidget(self.attempt_table, 1)
         overview_layout.addWidget(self.history_card, 1)
@@ -280,6 +305,9 @@ class ScanWidget(QWidget):
         self.import_configuration_button.clicked.connect(self.import_requested.emit)
         self.configuration_combo.currentTextChanged.connect(
             self._update_product_summary
+        )
+        self.configuration_combo.currentTextChanged.connect(
+            self._update_configuration_selection_state
         )
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
@@ -333,7 +361,11 @@ class ScanWidget(QWidget):
             )
         has_configurations = bool(self._configurations)
         self.configuration_combo.setEnabled(has_configurations)
-        self.start_button.setEnabled(has_configurations)
+        if has_configurations:
+            self.configuration_combo.setCurrentIndex(0)
+        self._update_configuration_selection_state(
+            self.configuration_combo.currentText()
+        )
         self.import_configuration_button.setVisible(not has_configurations)
         self._update_product_summary(self.configuration_combo.currentText())
         if self._run is None:
@@ -345,11 +377,10 @@ class ScanWidget(QWidget):
 
     @Slot()
     def _start_run(self) -> None:
-        index = self.configuration_combo.currentIndex()
-        if index < 0 or index >= len(self._configurations):
-            self._show_message("请先导入产品配置", "error")
+        configuration = self._selected_configuration()
+        if configuration is None:
+            self._show_message("请输入关键词并从候选项中选择产品配置", "error")
             return
-        configuration = self._configurations[index]
         try:
             operator = self._current_operator()
         except ValueError as error:
@@ -382,6 +413,21 @@ class ScanWidget(QWidget):
         self._announce_scan_step()
         self.run_changed.emit()
         QTimer.singleShot(0, self.focus_scanner)
+
+    @Slot(str)
+    def _update_configuration_selection_state(self, _text: str) -> None:
+        selected = self._selected_configuration()
+        self.start_button.setEnabled(selected is not None)
+        if selected is None and self._configurations and self._run is None:
+            self.product_summary_label.setText("产品：请输入关键词并选择匹配配置")
+
+    def _selected_configuration(self) -> ProductConfiguration | None:
+        selected_text = self.configuration_combo.currentText().strip().casefold()
+        for configuration in self._configurations:
+            label = f"{configuration.product_code} / {configuration.version}"
+            if label.casefold() == selected_text:
+                return configuration
+        return None
 
     def interrupt_active_run(self, reason: str) -> None:
         """Persist an unfinished active run before the UI is replaced or closed."""

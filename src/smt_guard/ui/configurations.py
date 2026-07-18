@@ -29,6 +29,9 @@ from smt_guard.ui.components import (
 )
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import (
+    UiLayoutStore,
+    enable_splitter_layout,
+    enable_table_layout,
     readable_item,
     set_column_widths,
     set_responsive_columns,
@@ -83,12 +86,14 @@ class ConfigurationManagementWidget(QWidget):
         *,
         announcer: AnnouncementSink | None = None,
         bom_repository: BomVersionLookup | None = None,
+        layout_store: UiLayoutStore | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._operator_provider = operator_provider
         self._announcer = announcer or SilentAnnouncementSink()
         self._bom_repository = bom_repository
+        self._layout_store = layout_store
         self._linked_boms: dict[int, BomVersion | None] = {}
         self._records: list[ProductConfigurationRecord] = []
         self._build_ui()
@@ -104,6 +109,8 @@ class ConfigurationManagementWidget(QWidget):
             )
         )
         filter_card = content_card(object_name="filterCard")
+        filter_card.setMinimumWidth(760)
+        filter_card.setMaximumWidth(980)
         filter_layout = QVBoxLayout(filter_card)
         filter_layout.addWidget(
             section_heading("筛选配置", "按产品编码、名称、规格或版本定位")
@@ -116,7 +123,7 @@ class ConfigurationManagementWidget(QWidget):
         top.addWidget(self.filter_input, 1)
         top.addWidget(self.refresh_button)
         filter_layout.addLayout(top)
-        layout.addWidget(filter_card)
+        layout.addWidget(filter_card, 0, Qt.AlignmentFlag.AlignLeft)
 
         splitter = QSplitter()
         self.splitter = splitter
@@ -147,6 +154,11 @@ class ConfigurationManagementWidget(QWidget):
             self.configuration_table,
             stretch=(0, 1, 2, 3, 5),
             compact=(4,),
+        )
+        enable_table_layout(
+            self.configuration_table,
+            "configurations/list",
+            self._layout_store,
         )
         list_layout.addWidget(self.configuration_table, 1)
         splitter.addWidget(list_card)
@@ -184,6 +196,11 @@ class ConfigurationManagementWidget(QWidget):
         )
         set_column_widths(self.assignment_table, (125, 125, 220))
         set_responsive_columns(self.assignment_table, stretch=(0, 1, 2))
+        enable_table_layout(
+            self.assignment_table,
+            "configurations/assignments",
+            self._layout_store,
+        )
         editor_layout.addWidget(self.assignment_table, 1)
         row_actions = QHBoxLayout()
         self.add_row_button = QPushButton("新增行")
@@ -210,6 +227,11 @@ class ConfigurationManagementWidget(QWidget):
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 6)
         splitter.setSizes((720, 1080))
+        enable_splitter_layout(
+            splitter,
+            "configurations/main",
+            self._layout_store,
+        )
         layout.addWidget(splitter, 1)
 
         version_card = content_card(object_name="actionCard")

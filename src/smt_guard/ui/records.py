@@ -29,6 +29,8 @@ from smt_guard.ui.components import (
 )
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import (
+    UiLayoutStore,
+    enable_table_layout,
     readable_item,
     set_column_widths,
     set_responsive_columns,
@@ -75,11 +77,13 @@ class RecordQueryWidget(QWidget):
         parent: QWidget | None = None,
         *,
         announcer: AnnouncementSink | None = None,
+        layout_store: UiLayoutStore | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._exporter = exporter
         self._announcer = announcer or SilentAnnouncementSink()
+        self._layout_store = layout_store
         self._build_ui()
         self._connect_signals()
 
@@ -162,6 +166,11 @@ class RecordQueryWidget(QWidget):
             self.record_table,
             stretch=(1, 5, 6, 7, 8),
             compact=(9, 10),
+        )
+        enable_table_layout(
+            self.record_table,
+            "records/attempts",
+            self._layout_store,
         )
         self.record_stack.addWidget(self.record_table)
         result_layout.addWidget(self.record_stack, 1)

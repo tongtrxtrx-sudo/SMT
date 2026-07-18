@@ -28,6 +28,9 @@ from smt_guard.ui.components import (
 )
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import (
+    UiLayoutStore,
+    enable_splitter_layout,
+    enable_table_layout,
     readable_item,
     set_column_widths,
     set_responsive_columns,
@@ -54,11 +57,13 @@ class BomManagementWidget(QWidget):
         parent: QWidget | None = None,
         *,
         announcer: AnnouncementSink | None = None,
+        layout_store: UiLayoutStore | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._operator_provider = operator_provider
         self._announcer = announcer or SilentAnnouncementSink()
+        self._layout_store = layout_store
         self._versions: list[BomVersion] = []
         self._build_ui()
         self.refresh()
@@ -73,6 +78,8 @@ class BomManagementWidget(QWidget):
             )
         )
         query_card = content_card(object_name="filterCard")
+        query_card.setMinimumWidth(760)
+        query_card.setMaximumWidth(980)
         query_layout = QVBoxLayout(query_card)
         query_layout.addWidget(section_heading("筛选 BOM", "按产品编码快速定位版本"))
         query = QHBoxLayout()
@@ -83,7 +90,7 @@ class BomManagementWidget(QWidget):
         query.addWidget(self.product_filter, 1)
         query.addWidget(self.refresh_button)
         query_layout.addLayout(query)
-        layout.addWidget(query_card)
+        layout.addWidget(query_card, 0, Qt.AlignmentFlag.AlignLeft)
 
         splitter = QSplitter()
         self.splitter = splitter
@@ -111,6 +118,11 @@ class BomManagementWidget(QWidget):
             self.version_table,
             stretch=(0, 4),
             compact=(2, 3),
+        )
+        enable_table_layout(
+            self.version_table,
+            "boms/versions",
+            self._layout_store,
         )
         version_layout.addWidget(self.version_table, 1)
         splitter.addWidget(version_card)
@@ -155,12 +167,18 @@ class BomManagementWidget(QWidget):
             stretch=(0, 1, 2, 4),
             compact=(3,),
         )
+        enable_table_layout(
+            self.material_table,
+            "boms/materials",
+            self._layout_store,
+        )
         detail_layout.addWidget(self.material_table, 1)
         splitter.addWidget(detail)
         splitter.setChildrenCollapsible(False)
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 6)
         splitter.setSizes((720, 1080))
+        enable_splitter_layout(splitter, "boms/main", self._layout_store)
         layout.addWidget(splitter, 1)
 
         compare_card = content_card(object_name="actionCard")
@@ -170,6 +188,7 @@ class BomManagementWidget(QWidget):
         self.compare_first = QComboBox()
         self.compare_second = QComboBox()
         self.compare_button = QPushButton("比较版本")
+        self.compare_button.setEnabled(False)
         self.compare_label = QLabel("请选择两个版本")
         compare.addWidget(self.compare_first)
         compare.addWidget(self.compare_second)
@@ -184,6 +203,9 @@ class BomManagementWidget(QWidget):
         self.refresh_button.clicked.connect(self.refresh)
         self.product_filter.returnPressed.connect(self.refresh)
         self.version_table.itemSelectionChanged.connect(self._render_selected)
+        self.compare_first.currentIndexChanged.connect(
+            self._refresh_compare_second
+        )
         self.compare_button.clicked.connect(self._compare)
         self.import_button.clicked.connect(self.import_requested.emit)
 
@@ -193,6 +215,7 @@ class BomManagementWidget(QWidget):
         self._versions = self._repository.list_versions(product or None)
         self.version_count_chip.setText(f"{len(self._versions)} 个")
         self.version_table.setRowCount(len(self._versions))
+        self.compare_first.blockSignals(True)
         self.compare_first.clear()
         self.compare_second.clear()
         for row, version in enumerate(self._versions):
@@ -207,12 +230,11 @@ class BomManagementWidget(QWidget):
                 self.version_table.setItem(row, column, readable_item(value))
             label = f"{values[0]} / {version.version}"
             self.compare_first.addItem(label, version.id)
-            self.compare_second.addItem(label, version.id)
+        self.compare_first.blockSignals(False)
+        self._refresh_compare_second()
         if self._versions:
             self.import_button.hide()
             self.version_table.selectRow(0)
-            if len(self._versions) > 1:
-                self.compare_second.setCurrentIndex(1)
             self._render_selected()
             self.status_label.setText(f"找到 {len(self._versions)} 个 BOM 版本")
         else:
@@ -223,6 +245,44 @@ class BomManagementWidget(QWidget):
             self.material_table.setRowCount(0)
             set_feedback(self.lifecycle_hint_label, "neutral", "请选择 BOM 版本")
             self.status_label.setText("没有匹配的 BOM 版本")
+
+    @Slot()
+    def _refresh_compare_second(self) -> None:
+        first = self._version_for_id(self.compare_first.currentData())
+        previous_second = self.compare_second.currentData()
+        self.compare_second.blockSignals(True)
+        self.compare_second.clear()
+        if first is not None:
+            product_code = first.document.product.material_code
+            for version in self._versions:
+                if (
+                    version.id != first.id
+                    and version.document.product.material_code == product_code
+                ):
+                    self.compare_second.addItem(
+                        f"{product_code} / {version.version}",
+                        version.id,
+                    )
+        previous_index = self.compare_second.findData(previous_second)
+        if previous_index >= 0:
+            self.compare_second.setCurrentIndex(previous_index)
+        self.compare_second.blockSignals(False)
+        can_compare = self.compare_second.count() > 0
+        self.compare_second.setEnabled(can_compare)
+        self.compare_button.setEnabled(can_compare)
+        self.compare_label.setText(
+            "请选择同一产品的另一个版本"
+            if can_compare
+            else "该产品暂无其他版本可比较"
+        )
+
+    def _version_for_id(self, version_id: object) -> BomVersion | None:
+        if not isinstance(version_id, int):
+            return None
+        return next(
+            (version for version in self._versions if version.id == version_id),
+            None,
+        )
 
     @Slot()
     def _render_selected(self) -> None:
@@ -287,6 +347,17 @@ class BomManagementWidget(QWidget):
         second = self.compare_second.currentData()
         if not isinstance(first, int) or not isinstance(second, int):
             self._show_error("请选择两个 BOM 版本")
+            return
+        first_version = self._version_for_id(first)
+        second_version = self._version_for_id(second)
+        if first_version is None or second_version is None:
+            self._show_error("请选择两个有效的 BOM 版本")
+            return
+        if (
+            first_version.document.product.material_code
+            != second_version.document.product.material_code
+        ):
+            self._show_error("只能比较同一产品的 BOM 版本")
             return
         comparison = self._repository.compare(first, second)
         self.compare_label.setText(

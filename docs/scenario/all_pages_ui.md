@@ -15,6 +15,11 @@
   and other low-frequency data in the selected-item detail area.
 - Avoid horizontal scrolling at the acceptance window size. Preserve hidden data in the widget
   model and tooltips where tests or advanced workflows still require it.
+- Let users drag every visible column divider and reorder columns. Restore widths and order on the
+  next launch; show horizontal scrolling only when a user intentionally makes columns wider than
+  the available table viewport.
+- When a cell value is too long for its current column, keep the compact ellipsis in the table and
+  show the complete value in a readable popup when the user clicks that cell.
 - Replace a blank table with an actionable empty state and show counts or outcome chips after a
   query or selection.
 - Keep destructive or lifecycle actions visually separate from refresh, compare, and file-choice
@@ -32,10 +37,13 @@
   normal standing distance.
 - Keep selection and filter inputs at readable maximum widths instead of stretching a single input
   across the entire display.
+- Keep BOM and product-configuration filter cards left-aligned between 760 and 980 pixels instead
+  of stretching them across a full-screen display.
 - Let high-value table columns share spare width. Keep status, counts, and other short values
   compact, and do not allocate all spare width to the final column.
 - Allow BOM, configuration, run, device/station, and audit split views to expand their detail panes
-  on a wide display; do not cap detail panes at fixed narrow widths.
+  on a wide display; do not cap detail panes at fixed narrow widths. Let users drag those splitters
+  and restore their chosen proportions on the next launch.
 - Center the import workflow and cap it at 1280 pixels so its three-step reading order remains clear
   on a 1920-pixel display.
 - Use a light application canvas, white content cards, a small blue title accent, consistent 12-pixel
@@ -69,6 +77,14 @@
 - Case 10 (single record entry): Hide the duplicate record-query navigation item while retaining its
   composed page and repository-backed workflow for compatibility; expose routine scan-record review
   and CSV export through Production Runs.
+- Case 11 (search and comparison): Type part of a product code or configuration version on the scan
+  page, keep the run action unavailable until an exact candidate is selected, keep the production
+  run query action beside its filters, and only offer BOM comparison targets from the same product.
+- Case 12 (persistent layout): Move and resize a table column and drag a split-pane handle, restart
+  the widgets with the same `ui_layout.json`, and verify that both arrangements are restored.
+- Case 13 (compact navigation and long fields): Distinguish navigation group headings from page
+  actions, cap the BOM/configuration filter cards, and click a truncated table value to reveal its
+  complete text.
 
 ## Status
 

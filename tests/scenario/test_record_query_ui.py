@@ -94,7 +94,7 @@ class RecordQueryWidgetTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(0, self.widget.record_table.horizontalScrollBar().maximum())
         self.assertEqual(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
             self.widget.record_table.horizontalScrollBarPolicy(),
         )
         self.assertIn("RUN-1", self.widget.result_title.text())

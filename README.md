@@ -60,6 +60,8 @@ Management tables and detail panes also share available width responsively, whil
 remains centered at a readable maximum width.
 
 Application data is stored in `%LOCALAPPDATA%\SMTGuard\smt_guard.sqlite3` by default.
+The last operator is stored beside it in `last_operator.txt`, and user-adjusted table columns and
+split-pane proportions are stored in `ui_layout.json` so the next launch restores the same view.
 
 ## Persistence foundation
 

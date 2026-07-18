@@ -32,7 +32,13 @@ from smt_guard.ui.components import (
     section_heading,
     set_feedback,
 )
-from smt_guard.ui.tables import set_column_widths, set_responsive_columns
+from smt_guard.ui.tables import (
+    UiLayoutStore,
+    enable_splitter_layout,
+    enable_table_layout,
+    set_column_widths,
+    set_responsive_columns,
+)
 
 
 class MasterDataRepository(Protocol):
@@ -199,11 +205,13 @@ class DeviceStationWidget(QWidget):
         repository: MasterDataRepository,
         *,
         operator_provider: Callable[[], str] | None = None,
+        layout_store: UiLayoutStore | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._operator_provider = operator_provider
+        self._layout_store = layout_store
         self._build_ui()
         self._connect_signals()
         self.refresh_devices()
@@ -226,6 +234,7 @@ class DeviceStationWidget(QWidget):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([900, 900])
+        enable_splitter_layout(splitter, "master-data/main", self._layout_store)
         root.addWidget(splitter, 1)
 
         self.status_label = QLabel("就绪")
@@ -258,6 +267,11 @@ class DeviceStationWidget(QWidget):
             self.device_table,
             stretch=(0, 1, 2),
             compact=(3,),
+        )
+        enable_table_layout(
+            self.device_table,
+            "master-data/devices",
+            self._layout_store,
         )
         layout.addWidget(self.device_table, 1)
 
@@ -316,6 +330,11 @@ class DeviceStationWidget(QWidget):
             self.station_table,
             stretch=(0, 1),
             compact=(2, 3),
+        )
+        enable_table_layout(
+            self.station_table,
+            "master-data/stations",
+            self._layout_store,
         )
         layout.addWidget(self.station_table, 1)
 

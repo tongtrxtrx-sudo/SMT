@@ -174,10 +174,14 @@ QLabel#navBrand {
     padding: 13px 10px;
 }
 QLabel#navSection {
-    color: #475467;
-    font-size: 13px;
+    color: #667085;
+    background-color: #eef2f6;
+    border-left: 3px solid #98a2b3;
+    border-radius: 5px;
+    font-size: 12px;
     font-weight: 700;
-    padding: 12px 10px 4px 10px;
+    padding: 7px 10px;
+    margin-top: 10px;
 }
 QPushButton[navItem="true"] {
     background-color: transparent;
@@ -185,7 +189,7 @@ QPushButton[navItem="true"] {
     border: 0;
     border-radius: 8px;
     min-height: 36px;
-    padding: 9px 14px;
+    padding: 9px 14px 9px 20px;
     text-align: left;
 }
 QPushButton[navItem="true"]:hover {
