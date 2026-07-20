@@ -205,7 +205,6 @@ class SeparateImportWidgetTests(unittest.TestCase):
         self.addCleanup(widget.close)
         widget.product_code_input.setText(" 501000087 ")
         widget.station_path_input.setText(" C:/imports/stations.xlsx ")
-        widget.station_sheet_input.setText(" Worksheet ")
         widget.version_input.setText(" V1 ")
         widget.station_import_button.click()
 
@@ -215,7 +214,7 @@ class SeparateImportWidgetTests(unittest.TestCase):
                 Path("C:/imports/stations.xlsx"),
                 "501000087",
                 "V1",
-                "Worksheet",
+                "",
             ),
             workflow.calls[-1],
         )
@@ -228,6 +227,7 @@ class SeparateImportWidgetTests(unittest.TestCase):
         self.addCleanup(widget.close)
         self.assertFalse(hasattr(widget, "bom_path_input"))
         self.assertFalse(hasattr(widget, "bom_import_button"))
+        self.assertFalse(hasattr(widget, "station_sheet_input"))
 
 
 if __name__ == "__main__":

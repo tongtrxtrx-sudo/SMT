@@ -49,6 +49,83 @@ class SqliteSchemaTests(unittest.TestCase):
         row = self.connection.execute("SELECT code, name FROM devices").fetchone()
         self.assertEqual(("SMT-01", "Machine 1"), row)
 
+    def test_backup_restore_preserves_historical_bom_links(self) -> None:
+        SqliteDatabase(self.connection).initialize()
+        self.connection.execute(
+            "INSERT INTO devices (code, name, line, enabled) VALUES (?, ?, ?, ?)",
+            ("SMT-01", "Machine 1", "Line A", 1),
+        )
+        self.connection.execute(
+            "INSERT INTO stations (device_code, code, enabled, referenced) "
+            "VALUES (?, ?, ?, ?)",
+            ("SMT-01", "F-01", 1, 1),
+        )
+        cursor = self.connection.execute(
+            "INSERT INTO bom_versions ("
+            "product_code, version, bom_number, bom_name, product_name, "
+            "product_specification, status, source_filename, source_sha256, "
+            "imported_at, imported_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "501000087",
+                "BOM-V1",
+                "BOM-1",
+                "Historical BOM",
+                "Board",
+                "Spec",
+                "DRAFT",
+                "legacy.xlsx",
+                "abc123",
+                "2026-07-20T00:00:00+00:00",
+                "OP-01",
+            ),
+        )
+        bom_id = cursor.lastrowid
+        assert bom_id is not None
+        self.connection.execute(
+            "INSERT INTO bom_items "
+            "(bom_version_id, material_code, name, specification, quantity, category) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (bom_id, "M-1", "Material", "Spec", "1", "Main"),
+        )
+        self.connection.execute(
+            "UPDATE bom_versions SET status = 'ACTIVE' WHERE id = ?",
+            (bom_id,),
+        )
+        self.connection.execute(
+            "INSERT INTO product_configurations "
+            "(product_code, version, status, bom_version_id) VALUES (?, ?, ?, ?)",
+            ("501000087", "V1", "DRAFT", bom_id),
+        )
+        self.connection.execute(
+            "INSERT INTO station_assignments "
+            "(product_code, version, device_code, station_code, material_code) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("501000087", "V1", "SMT-01", "F-01", "M-1"),
+        )
+        self.connection.execute(
+            "UPDATE product_configurations SET status = 'ACTIVE' "
+            "WHERE product_code = ? AND version = ?",
+            ("501000087", "V1"),
+        )
+        self.connection.commit()
+
+        restored = sqlite3.connect(":memory:")
+        self.addCleanup(restored.close)
+        self.connection.backup(restored)
+        SqliteDatabase(restored).initialize()
+
+        self.assertEqual(("ok",), restored.execute("PRAGMA quick_check").fetchone())
+        self.assertEqual(
+            (bom_id, "M-1"),
+            restored.execute(
+                "SELECT pc.bom_version_id, bi.material_code "
+                "FROM product_configurations pc "
+                "JOIN bom_items bi ON bi.bom_version_id = pc.bom_version_id "
+                "WHERE pc.product_code = ? AND pc.version = ?",
+                ("501000087", "V1"),
+            ).fetchone(),
+        )
+
     def test_station_requires_an_existing_device(self) -> None:
         SqliteDatabase(self.connection).initialize()
 

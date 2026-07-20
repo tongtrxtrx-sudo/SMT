@@ -36,6 +36,7 @@ from smt_guard.feedback import (
 from smt_guard.records import Attempt
 from smt_guard.run import AttemptSink, ProductionRun, RunPersistence, VerificationRun
 from smt_guard.scan import ProductConfiguration, ScanStep
+from smt_guard.ui.components import confirm_action
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import (
     UiLayoutStore,
@@ -181,18 +182,27 @@ class ScanWidget(QWidget):
         self.feedback_label.setMinimumHeight(72)
         self.feedback_label.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
         )
         self.feedback_label.setWordWrap(True)
-        hero_layout.addWidget(self.feedback_label, 1)
-        self.step_label = QLabel("站位 1  →  物料 2")
-        self.step_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.step_label.setStyleSheet("color: #667085;")
-        hero_layout.addWidget(self.step_label)
-        self.rescan_station_button = QPushButton("重新扫描站位")
+        hero_layout.addWidget(self.feedback_label)
+
+        context_row = QHBoxLayout()
+        context_row.setContentsMargins(0, 0, 0, 0)
+        context_row.setSpacing(10)
+        context_row.addStretch(1)
+        self.scan_context_label = QLabel()
+        self.scan_context_label.setObjectName("scanContext")
+        self.scan_context_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.scan_context_label.hide()
+        context_row.addWidget(self.scan_context_label)
+        self.rescan_station_button = QPushButton("重扫站位")
         self.rescan_station_button.setToolTip("放弃当前站位，返回站位扫码步骤")
+        self.rescan_station_button.setMaximumHeight(36)
         self.rescan_station_button.hide()
-        hero_layout.addWidget(self.rescan_station_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        context_row.addWidget(self.rescan_station_button)
+        context_row.addStretch(1)
+        hero_layout.addLayout(context_row)
 
         self.material_panel = QWidget()
         material_row = QHBoxLayout(self.material_panel)
@@ -353,12 +363,9 @@ class ScanWidget(QWidget):
         self.input_card.setMinimumHeight(82 if wide else 66)
         self.scan_input.setMinimumHeight(56 if wide else 44)
         self.submit_button.setMinimumHeight(56 if wide else 44)
-        self.feedback_label.setMinimumHeight(96 if wide else 72)
-        self.hero_card.setMinimumHeight(230 if wide else 170)
-        # The reduced feedback minimum now fits safely inside these compact
-        # bounds; unlike the previous 110px feedback minimum, it cannot force
-        # the scan prompt to be clipped by its parent.
-        self.hero_card.setMaximumHeight(280 if wide else 220)
+        self.feedback_label.setMinimumHeight(82 if wide else 68)
+        self.hero_card.setMinimumHeight(220 if wide else 190)
+        self.hero_card.setMaximumHeight(280 if wide else 240)
         self.hero_column.setMaximumHeight(374 if wide else 296)
         self.progress_card.setMaximumHeight(72)
         if not self._history_user_overridden:
@@ -400,6 +407,13 @@ class ScanWidget(QWidget):
         previous_run = self._run
         replaced_running = previous_run is not None and not previous_run.completed
         if replaced_running and previous_run is not None:
+            if not confirm_action(
+                self,
+                "确认开始新作业",
+                f"当前作业 {previous_run.job_number} 尚未完成。\n"
+                "继续将中断当前作业并开始新作业。",
+            ):
+                return
             previous_run.interrupt("开始新的作业")
         self._run = VerificationRun(
             self._run_id_factory(),
@@ -452,6 +466,22 @@ class ScanWidget(QWidget):
                 self._announcer.announce(VoicePrompt.RUN_INTERRUPTED)
             self.run_changed.emit()
 
+    @property
+    def active_run(self) -> VerificationRun | None:
+        """Return the current in-memory job for application coordination."""
+        return self._run
+
+    def confirm_operator_change(self, next_operator: str) -> bool:
+        """Confirm a user change that would interrupt the active scan job."""
+        if self._run is None or self._run.completed:
+            return True
+        return confirm_action(
+            self,
+            "确认切换操作员",
+            f"当前作业 {self._run.job_number} 尚未完成。\n"
+            f"切换为 {next_operator} 将中断当前作业。",
+        )
+
     def resume_run(self, run_id: str) -> None:
         """Resume one interrupted persisted run into the scanner page."""
         if self._runs is None:
@@ -460,6 +490,13 @@ class ScanWidget(QWidget):
         try:
             operator = self._current_operator()
             if self._run is not None and not self._run.completed:
+                if not confirm_action(
+                    self,
+                    "确认恢复其他作业",
+                    f"当前作业 {self._run.job_number} 尚未完成。\n"
+                    "继续将中断当前作业并恢复所选作业。",
+                ):
+                    return
                 self._run.interrupt("恢复其他作业")
             persisted = self._runs.resume(run_id, operator=operator, resumed_at=self._clock())
             self._run = VerificationRun.resume(
@@ -582,22 +619,33 @@ class ScanWidget(QWidget):
             VisualIntent.OK: "ok",
             VisualIntent.NG: "ng",
         }[state.intent]
-        message = "全部对料完成" if state.complete else state.message.replace("请扫描", "请扫码")
+        raw_message = (
+            "全部对料完成"
+            if state.complete
+            else state.message.replace("请扫描", "请扫码")
+        )
+        message_lines = raw_message.splitlines()
+        context = ""
+        if message_lines and message_lines[0].startswith("当前站位 "):
+            context = message_lines.pop(0).replace("当前站位 ", "站位 ", 1).replace(
+                "所属设备 ", "设备 ", 1
+            )
+        message = "\n".join(message_lines)
         self._show_message(message, feedback_state)
+        if context:
+            self.scan_context_label.setText(context)
+        elif state.complete or self._run is None or self._run.current_step is ScanStep.STATION:
+            self.scan_context_label.clear()
+        self.scan_context_label.setVisible(bool(self.scan_context_label.text()))
         self.expected_label.setText(f"要求物料：{state.expected_material or '-'}")
         self.scanned_label.setText(f"扫码物料：{state.scanned_material or '-'}")
-        show_material = state.intent is VisualIntent.NG or (
-            self._run is not None
-            and not state.complete
-            and self._run.current_step is ScanStep.MATERIAL
-        )
+        show_material = state.intent is VisualIntent.NG or bool(state.scanned_material)
         self.material_panel.setVisible(show_material)
         self.rescan_station_button.setVisible(
             self._run is not None
             and not self._run.completed
             and self._run.current_step is ScanStep.MATERIAL
         )
-        self._render_step_indicator()
         self.progress_bar.setValue(state.completed_stations)
         self.progress_count_label.setText(
             f"{state.completed_stations} / {self.progress_bar.maximum()}"
@@ -675,21 +723,6 @@ class ScanWidget(QWidget):
             f"border: 3px solid {border}; border-radius: 12px;"
         )
         self.feedback_label.setText(message)
-
-    def _render_step_indicator(self) -> None:
-        if self._run is None or self._run.completed:
-            self.step_label.setText("站位 1  →  物料 2")
-            return
-        labels = {
-            ScanStep.STATION: "● 站位 1  →  物料 2",
-            ScanStep.MATERIAL: "站位 1  →  ● 物料 2",
-        }
-        colors = {
-            ScanStep.STATION: "#b54708",
-            ScanStep.MATERIAL: "#067647",
-        }
-        self.step_label.setText(labels[self._run.current_step])
-        self.step_label.setStyleSheet(f"color: {colors[self._run.current_step]}; font-weight: 600;")
 
     def _set_scanner_status(self, state: str) -> None:
         text, style = {

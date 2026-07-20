@@ -26,6 +26,7 @@ from smt_guard.ui.components import (
     prepare_table,
     section_heading,
     set_feedback,
+    show_notification,
 )
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import (
@@ -178,6 +179,7 @@ class RecordQueryWidget(QWidget):
 
         self.status_label = QLabel("请输入运行编号")
         set_feedback(self.status_label, "neutral", "请输入运行编号")
+        self.status_label.hide()
         layout.addWidget(self.status_label)
 
     def _connect_signals(self) -> None:
@@ -263,13 +265,13 @@ class RecordQueryWidget(QWidget):
             self.record_stack.setCurrentWidget(self.empty_state)
 
     def _show_success(self, message: str) -> None:
-        set_feedback(self.status_label, "success", message)
+        show_notification(self.status_label, "success", message)
 
     def _show_neutral(self, message: str) -> None:
-        set_feedback(self.status_label, "neutral", message)
+        show_notification(self.status_label, "neutral", message)
 
     def _show_error(self, message: str) -> None:
-        set_feedback(self.status_label, "error", message)
+        show_notification(self.status_label, "error", message, duration_ms=6500)
 
     @staticmethod
     def _required(value: str, label: str) -> str:

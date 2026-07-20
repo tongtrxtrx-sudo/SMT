@@ -321,12 +321,17 @@ QLabel[metricTone="primary"] {
     color: #175cd3;
 }
 QLabel#scanFeedback {
-    font-size: 36px;
+    font-size: 30px;
     font-weight: 700;
-    padding: 24px;
+    padding: 14px 18px;
     background-color: #ffffff;
     border: 3px solid #84caff;
     border-radius: 12px;
+}
+QLabel#scanContext {
+    color: #475467;
+    font-size: 17px;
+    font-weight: 600;
 }
 QProgressBar {
     border: 1px solid #b7c4d3;
@@ -385,9 +390,8 @@ class MainWindow(QMainWindow):
     RECORDS_TAB = 2
     MASTER_DATA_TAB = 3
     IMPORT_TAB = 4
-    BOMS_TAB = 5
-    CONFIGURATIONS_TAB = 6
-    AUDITS_TAB = 7
+    CONFIGURATIONS_TAB = 5
+    AUDITS_TAB = 6
 
     PAGE_NAMES = (
         "扫码作业",
@@ -395,7 +399,6 @@ class MainWindow(QMainWindow):
         "记录查询",
         "设备与站位",
         "导入产品配置",
-        "BOM 历史",
         "产品配置",
         "更多",
     )
@@ -405,7 +408,6 @@ class MainWindow(QMainWindow):
         scan_widget: ScanWidget,
         master_data_widget: QWidget,
         import_widget: QWidget,
-        bom_widget: QWidget,
         configuration_widget: QWidget,
         run_widget: QWidget,
         records_widget: QWidget,
@@ -447,14 +449,13 @@ class MainWindow(QMainWindow):
         self.navigation_group = QButtonGroup(self)
         self.navigation_group.setExclusive(True)
         self.navigation_buttons: list[QPushButton] = []
-        section_starts = {0: "作业", 3: "配置", 7: "系统"}
+        section_starts = {0: "作业", 3: "配置", 6: "系统"}
         tooltips = (
             "现场主作业",
             "作业进度与扫码记录",
             "高级记录查询",
             "基础配置",
             "导入站位物料配置",
-            "历史 BOM 数据",
             "产品配置管理",
             "审计追溯与界面设置",
         )
@@ -470,9 +471,9 @@ class MainWindow(QMainWindow):
             self.navigation_group.addButton(button, index)
             self.navigation_buttons.append(button)
             navigation_layout.addWidget(button)
-            if index in (self.RECORDS_TAB, self.IMPORT_TAB, self.BOMS_TAB):
-                # Keep compatibility pages composed for historical data and
-                # direct signal routing, but expose one concise operator path.
+            if index in (self.RECORDS_TAB, self.IMPORT_TAB):
+                # Keep low-frequency pages composed for direct signal routing,
+                # but expose one concise operator path.
                 button.setHidden(True)
         navigation_layout.addStretch(1)
         self.operator_widget = operator_widget
@@ -496,7 +497,6 @@ class MainWindow(QMainWindow):
             records_widget,
             master_data_widget,
             import_widget,
-            bom_widget,
             configuration_widget,
             audit_widget,
         )

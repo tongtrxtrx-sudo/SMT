@@ -139,9 +139,10 @@ class ApplicationCompositionTests(unittest.TestCase):
         self.assertTrue(
             self.runtime.window.navigation_buttons[self.runtime.window.IMPORT_TAB].isHidden()
         )
-        self.assertTrue(
-            self.runtime.window.navigation_buttons[self.runtime.window.BOMS_TAB].isHidden()
-        )
+        self.assertNotIn("BOM 历史", self.runtime.window.PAGE_NAMES)
+        self.assertFalse(hasattr(self.runtime.window, "BOMS_TAB"))
+        self.assertFalse(hasattr(self.runtime, "boms"))
+        self.assertEqual(7, self.runtime.window.page_stack.count())
         self.assertIsInstance(
             self.runtime.window.tab_widget.widget(self.runtime.window.RECORDS_TAB),
             RecordQueryWidget,
@@ -217,14 +218,6 @@ class ApplicationCompositionTests(unittest.TestCase):
         )
         assert isinstance(run_widget, ProductionRunManagementWidget)
         run_widget.refresh()
-        run_widget.snapshot_label.setText(
-            "配置快照：501000009/0001\n"
-            "BOM 版本 ID：4\n"
-            "启动操作员：111 | 状态：RUNNING\n"
-            "开始时间：2026-07-18 05:38\n"
-            "结束/中断：-\n"
-            "中断原因：-"
-        )
         self.runtime.window.page_stack.setCurrentIndex(self.runtime.window.RUNS_TAB)
 
         self.runtime.window.resize(1366, 800)
@@ -350,7 +343,6 @@ class ApplicationCompositionTests(unittest.TestCase):
         import_widget = self.runtime.import_widget
         import_widget.product_code_input.setText("501000087")
         import_widget.station_path_input.setText(str(station_path))
-        import_widget.station_sheet_input.setText("Stations")
         import_widget.version_input.setText("V1")
 
         import_widget.station_import_button.click()
@@ -439,7 +431,6 @@ class ApplicationCompositionTests(unittest.TestCase):
         import_widget = self.runtime.import_widget
         import_widget.product_code_input.setText("501000087")
         import_widget.station_path_input.setText(str(station_path))
-        import_widget.station_sheet_input.setText("Stations")
         import_widget.version_input.setText("V1")
         import_widget.station_import_button.click()
         self.assertIn("导入成功", import_widget.status_label.text())
@@ -482,6 +473,9 @@ class ApplicationCompositionTests(unittest.TestCase):
         master_widget.device_name_input.setText("贴片机一号（已校准）")
         master_widget.update_device_button.click()
         master_widget.station_table.selectRow(0)
+        master_widget.set_confirmation_provider(
+            lambda _parent, _title, _message: True
+        )
         master_widget.disable_station_button.click()
         master_widget.enable_station_button.click()
         self.assertTrue(self.runtime.master_data.is_station_enabled("SMT-01", "F-01"))
@@ -496,7 +490,8 @@ class ApplicationCompositionTests(unittest.TestCase):
         configuration_widget.copy_button.click()
         configuration_widget.validate_button.click()
         configuration_widget.activate_button.click()
-        configuration_widget.disable_button.click()
+        with patch("smt_guard.ui.configurations.confirm_action", return_value=True):
+            configuration_widget.disable_button.click()
         self.assertIn("已停用", configuration_widget.status_label.text())
 
         self.runtime.window.resize(1366, 800)
@@ -560,6 +555,38 @@ class ApplicationCompositionTests(unittest.TestCase):
         control.switch_button.click()
         self.assertFalse(control.operator_input.isHidden())
         self.assertEqual([VoicePrompt.OPERATOR_CONFIRMED], self.announcements.prompts)
+
+    def test_switching_operator_confirms_before_interrupting_active_job(self) -> None:
+        control = self.runtime.window.findChild(OperatorSessionWidget)
+        if control is None:
+            self.fail("Missing operator session control")
+        control.operator_input.setText("OP-01")
+        control.sign_in_button.click()
+        self.runtime.master_data.add_device("SMT-01", "Machine 1", "Line A")
+        self.runtime.master_data.add_station("SMT-01", "F-01")
+        self.runtime.configurations.save(
+            ProductConfiguration(
+                "501000087", "V1", {("SMT-01", "F-01"): "013000081"}
+            ),
+            actor="OP-01",
+        )
+        self.runtime.scan_widget.refresh_configurations()
+        self.runtime.scan_widget.start_button.click()
+        active_run = self.runtime.scan_widget.active_run
+        assert active_run is not None
+
+        control.switch_button.click()
+        control.operator_input.setText("OP-02")
+        with patch("smt_guard.ui.scanning.confirm_action", return_value=False):
+            control.sign_in_button.click()
+        self.assertEqual("OP-01", self.runtime.operator_session.require())
+        self.assertIs(active_run, self.runtime.scan_widget.active_run)
+        self.assertIn("取消", control.status_label.text())
+
+        with patch("smt_guard.ui.scanning.confirm_action", return_value=True):
+            control.sign_in_button.click()
+        self.assertEqual("OP-02", self.runtime.operator_session.require())
+        self.assertIsNone(self.runtime.scan_widget.active_run)
 
 
 if __name__ == "__main__":

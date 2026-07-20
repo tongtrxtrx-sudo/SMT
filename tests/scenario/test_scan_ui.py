@@ -1,6 +1,7 @@
 import os
 import unittest
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -164,11 +165,11 @@ class ScanWidgetTests(unittest.TestCase):
         widget.start_button.click()
 
         self.scan(widget, "F-01")
-        self.assertIn("物料", widget.feedback_label.text())
-        self.assertIn("当前站位 F-01", widget.feedback_label.text())
-        self.assertIn("所属设备 SMT-01", widget.feedback_label.text())
+        self.assertEqual("请扫码物料码", widget.feedback_label.text())
+        self.assertEqual("站位 F-01 · 设备 SMT-01", widget.scan_context_label.text())
+        self.assertFalse(hasattr(widget, "step_label"))
         self.assertTrue(widget.rescan_station_button.isVisibleTo(widget))
-        self.assertFalse(widget.expected_label.isHidden())
+        self.assertTrue(widget.material_panel.isHidden())
         self.assertIn("#ecfdf3", widget.feedback_label.styleSheet())
         self.scan(widget, "013000081")
 
@@ -244,7 +245,8 @@ class ScanWidgetTests(unittest.TestCase):
         widget = self.make_widget([self.configuration])
         widget.start_button.click()
         self.scan(widget, "WRONG-STATION")
-        widget.start_button.click()
+        with patch("smt_guard.ui.scanning.confirm_action", return_value=True):
+            widget.start_button.click()
 
         self.assertEqual(
             [
@@ -254,6 +256,17 @@ class ScanWidgetTests(unittest.TestCase):
             ],
             self.announcements.prompts,
         )
+
+    def test_cancelled_new_run_keeps_current_run_active(self) -> None:
+        widget = self.make_widget([self.configuration])
+        widget.start_button.click()
+        active_run = widget.active_run
+
+        with patch("smt_guard.ui.scanning.confirm_action", return_value=False):
+            widget.start_button.click()
+
+        self.assertIs(active_run, widget.active_run)
+        self.assertTrue(widget.scan_input.isEnabled())
 
     def test_non_terminal_ok_scan_uses_material_ok_prompt(self) -> None:
         configuration = ProductConfiguration(
@@ -337,6 +350,26 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertLessEqual(widget.progress_card.height(), 72)
         self.assertTrue(widget.history_button.isChecked())
         self.assertTrue(widget.attempt_table.isVisible())
+
+    def test_material_prompt_never_clips_at_laptop_or_full_hd_sizes(self) -> None:
+        widget = self.make_widget([self.configuration])
+        widget.show()
+        widget.start_button.click()
+        self.scan(widget, "F-01")
+
+        for width, height in ((1180, 700), (1920, 900)):
+            with self.subTest(width=width, height=height):
+                widget.resize(width, height)
+                self.app.processEvents()
+                self.assertGreaterEqual(
+                    widget.feedback_label.height(),
+                    widget.feedback_label.sizeHint().height(),
+                )
+                self.assertGreaterEqual(
+                    widget.scan_context_label.height(),
+                    widget.scan_context_label.sizeHint().height(),
+                )
+                self.assertLessEqual(widget.hero_card.height(), 280)
 
     def test_operator_can_explicitly_rescan_station_before_material(self) -> None:
         widget = self.make_widget([self.configuration])

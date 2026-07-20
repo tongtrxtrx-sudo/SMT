@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -22,7 +23,13 @@ from PySide6.QtWidgets import (
 
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.importing import ImportResult
-from smt_guard.ui.components import PageHeader, content_card, prepare_table, set_feedback
+from smt_guard.ui.components import (
+    PageHeader,
+    content_card,
+    prepare_table,
+    set_feedback,
+    show_notification,
+)
 from smt_guard.ui.errors import operator_error_message
 from smt_guard.ui.tables import (
     UiLayoutStore,
@@ -31,6 +38,7 @@ from smt_guard.ui.tables import (
     set_column_widths,
     set_responsive_columns,
 )
+from smt_guard.xlsx_reader import AmbiguousWorksheetError
 
 
 class WorkbookDropZone(QFrame):
@@ -137,10 +145,8 @@ class ConfigurationImportWidget(QWidget):
         self.product_code_input.setPlaceholderText("例如：501000009")
         self.version_input = QLineEdit()
         self.version_input.setPlaceholderText("例如：0001")
-        self.station_sheet_input = QLineEdit("Worksheet")
         form.addRow("产品编码", self.product_code_input)
         form.addRow("配置版本", self.version_input)
-        form.addRow("工作表", self.station_sheet_input)
         workflow_layout.addLayout(form)
 
         self.station_path_input = QLineEdit()
@@ -191,6 +197,7 @@ class ConfigurationImportWidget(QWidget):
         self.status_label = QLabel("请选择配置表并填写产品信息")
         self.status_label.setObjectName("feedbackLabel")
         set_feedback(self.status_label, "neutral", "请选择配置表并填写产品信息")
+        self.status_label.hide()
         workflow_layout.addWidget(self.status_label)
 
         centered = QHBoxLayout()
@@ -251,13 +258,41 @@ class ConfigurationImportWidget(QWidget):
 
     @Slot()
     def _import_configuration(self) -> None:
+        station_path = Path()
+        product_code = ""
+        version = ""
         try:
+            station_path = Path(self._required(self.station_path_input.text(), "配置表文件"))
+            product_code = self._required(self.product_code_input.text(), "产品编码")
+            version = self._required(self.version_input.text(), "配置版本")
             result = self._workflow.import_configuration(
-                Path(self._required(self.station_path_input.text(), "配置表文件")),
-                product_code=self._required(self.product_code_input.text(), "产品编码"),
-                version=self._required(self.version_input.text(), "配置版本"),
-                station_sheet=self._required(self.station_sheet_input.text(), "工作表"),
+                station_path,
+                product_code=product_code,
+                version=version,
+                station_sheet="",
             )
+        except AmbiguousWorksheetError as error:
+            sheet_name, accepted = QInputDialog.getItem(
+                self,
+                "选择工作表",
+                "Excel 中有多个页签，请选择包含站位和物料数据的页签：",
+                list(error.sheet_names),
+                0,
+                False,
+            )
+            if not accepted:
+                return
+            try:
+                result = self._workflow.import_configuration(
+                    station_path,
+                    product_code=product_code,
+                    version=version,
+                    station_sheet=sheet_name,
+                )
+            except (OSError, ValueError) as retry_error:
+                self._show_error(operator_error_message(retry_error))
+                self._announcer.announce(VoicePrompt.IMPORT_FAILED)
+                return
         except (OSError, ValueError) as error:
             self._show_error(operator_error_message(error))
             self._announcer.announce(VoicePrompt.IMPORT_FAILED)
@@ -283,10 +318,10 @@ class ConfigurationImportWidget(QWidget):
             self.assignment_table.setItem(row, 1, readable_item(material))
 
     def _show_success(self, message: str) -> None:
-        set_feedback(self.status_label, "success", message)
+        show_notification(self.status_label, "success", message)
 
     def _show_error(self, message: str) -> None:
-        set_feedback(self.status_label, "error", message)
+        show_notification(self.status_label, "error", message, duration_ms=6500)
 
     @staticmethod
     def _required(value: str, label: str) -> str:

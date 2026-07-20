@@ -28,10 +28,12 @@ from PySide6.QtWidgets import (
 from smt_guard.master_data import Device, MasterDataError, Station
 from smt_guard.ui.components import (
     PageHeader,
+    confirm_action,
     content_card,
     prepare_table,
     section_heading,
     set_feedback,
+    show_notification,
 )
 from smt_guard.ui.tables import (
     UiLayoutStore,
@@ -203,15 +205,24 @@ class DeviceStationWidget(QWidget):
         *,
         operator_provider: Callable[[], str] | None = None,
         layout_store: UiLayoutStore | None = None,
+        confirmation_provider: Callable[[QWidget | None, str, str], bool] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._operator_provider = operator_provider
         self._layout_store = layout_store
+        self._confirm = confirmation_provider or confirm_action
         self._build_ui()
         self._connect_signals()
         self.refresh_devices()
+
+    def set_confirmation_provider(
+        self,
+        provider: Callable[[QWidget | None, str, str], bool],
+    ) -> None:
+        """Override confirmation handling for application composition or tests."""
+        self._confirm = provider
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -237,6 +248,7 @@ class DeviceStationWidget(QWidget):
         self.status_label = QLabel("就绪")
         self.status_label.setObjectName("feedbackLabel")
         set_feedback(self.status_label, "neutral", "就绪")
+        self.status_label.hide()
         root.addWidget(self.status_label)
 
     def _build_device_panel(self) -> QWidget:
@@ -521,6 +533,12 @@ class DeviceStationWidget(QWidget):
         device = self._require_selected_device()
         if device is None:
             return
+        if not self._confirm(
+            self,
+            "确认停用设备",
+            f"确认停用设备 {device}？\n该设备及其站位将不能用于新建扫码作业。",
+        ):
+            return
         try:
             self._repository.disable_device(device, **self._actor_kwargs())
         except MasterDataError as error:
@@ -567,6 +585,18 @@ class DeviceStationWidget(QWidget):
         code = self._require_selected_device()
         if code is None:
             return
+        destructive = {
+            "delete_device": ("确认删除设备", "删除"),
+            "archive_device": ("确认归档设备", "归档"),
+        }.get(method_name)
+        if destructive is not None:
+            title, action = destructive
+            if not self._confirm(
+                self,
+                title,
+                f"确认{action}设备 {code}？此操作会改变设备的可用状态。",
+            ):
+                return
         try:
             getattr(self._repository, method_name)(code, **self._actor_kwargs())
         except (MasterDataError, ValueError) as error:
@@ -627,6 +657,12 @@ class DeviceStationWidget(QWidget):
         if selection is None:
             return
         device, station = selection
+        if not self._confirm(
+            self,
+            "确认停用站位",
+            f"确认停用站位 {station}（设备 {device}）？\n停用后不能用于新建扫码作业。",
+        ):
+            return
         try:
             self._repository.disable_station(device, station, **self._actor_kwargs())
         except MasterDataError as error:
@@ -641,6 +677,12 @@ class DeviceStationWidget(QWidget):
         if selection is None:
             return
         device, station = selection
+        if not self._confirm(
+            self,
+            "确认删除站位",
+            f"确认删除站位 {station}（设备 {device}）？",
+        ):
+            return
         try:
             self._repository.delete_station(device, station, **self._actor_kwargs())
         except MasterDataError as error:
@@ -685,6 +727,12 @@ class DeviceStationWidget(QWidget):
         if selection is None:
             return
         device, station = selection
+        if method_name == "archive_station" and not self._confirm(
+            self,
+            "确认归档站位",
+            f"确认归档站位 {station}（设备 {device}）？此操作会改变站位的可用状态。",
+        ):
+            return
         try:
             getattr(self._repository, method_name)(device, station, **self._actor_kwargs())
         except (MasterDataError, ValueError) as error:
@@ -787,11 +835,11 @@ class DeviceStationWidget(QWidget):
         return device, station
 
     def _show_success(self, message: str) -> None:
-        set_feedback(self.status_label, "success", message)
+        show_notification(self.status_label, "success", message)
         self.master_data_changed.emit()
 
     def _show_error(self, message: str) -> None:
-        set_feedback(self.status_label, "error", message)
+        show_notification(self.status_label, "error", message, duration_ms=6500)
 
     @Slot(bool)
     def _toggle_bulk_panel(self, expanded: bool) -> None:

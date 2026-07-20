@@ -34,7 +34,10 @@ class DeviceStationWidgetTests(unittest.TestCase):
         self.repository = SqliteMasterDataRepository(self.connection)
 
     def make_widget(self) -> DeviceStationWidget:
-        widget = DeviceStationWidget(self.repository)
+        widget = DeviceStationWidget(
+            self.repository,
+            confirmation_provider=lambda _parent, _title, _message: True,
+        )
         self.addCleanup(widget.close)
         return widget
 
@@ -215,7 +218,9 @@ class DeviceStationWidgetTests(unittest.TestCase):
         self.repository.add_station("SMT-01", "F-01")
         session = OperatorSession("ADMIN-UI")
         widget = DeviceStationWidget(
-            self.repository, operator_provider=session.require
+            self.repository,
+            operator_provider=session.require,
+            confirmation_provider=lambda _parent, _title, _message: True,
         )
         self.addCleanup(widget.close)
 
@@ -235,6 +240,18 @@ class DeviceStationWidgetTests(unittest.TestCase):
         self.assertEqual("停用", widget.station_table.item(0, 2).text())  # type: ignore[union-attr]
         audits = SqliteAuditRepository(self.connection).search(actor="ADMIN-UI")
         self.assertEqual(5, len(audits))
+
+    def test_cancelled_disable_keeps_device_enabled(self) -> None:
+        self.repository.add_device("SMT-01", "Machine 1", "Line A")
+        widget = DeviceStationWidget(
+            self.repository,
+            confirmation_provider=lambda _parent, _title, _message: False,
+        )
+        self.addCleanup(widget.close)
+
+        widget.disable_device_button.click()
+
+        self.assertTrue(self.repository.is_device_enabled("SMT-01"))
 
     def test_legacy_archived_entities_can_return_to_use(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")

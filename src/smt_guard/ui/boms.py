@@ -28,6 +28,7 @@ from smt_guard.ui.components import (
     prepare_table,
     section_heading,
     set_feedback,
+    show_notification,
 )
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import (
@@ -223,6 +224,7 @@ class BomManagementWidget(QWidget):
         layout.addWidget(compare_card)
         self.status_label = QLabel("就绪")
         set_feedback(self.status_label, "neutral", "就绪")
+        self.status_label.hide()
         layout.addWidget(self.status_label)
 
         self.refresh_button.clicked.connect(self.refresh)
@@ -404,4 +406,4 @@ class BomManagementWidget(QWidget):
         )
 
     def _show_error(self, message: str) -> None:
-        set_feedback(self.status_label, "error", message)
+        show_notification(self.status_label, "error", message, duration_ms=6500)

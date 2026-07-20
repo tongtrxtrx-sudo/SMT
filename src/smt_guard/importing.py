@@ -93,8 +93,6 @@ class ConfigurationImportService:
             raise ImportValidationError("Product code is required")
         if not normalized_version:
             raise ImportValidationError("Product configuration version is required")
-        if not normalized_sheet:
-            raise ImportValidationError("Station worksheet name is required")
 
         station_rows = self._reader.read_sheet(station_path, normalized_sheet)
         configuration = ProductConfigurationBuilder(self._master_data).build(

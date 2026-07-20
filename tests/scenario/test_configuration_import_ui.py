@@ -14,6 +14,7 @@ from smt_guard.feedback import VoicePrompt
 from smt_guard.importing import ImportResult
 from smt_guard.scan import ProductConfiguration
 from smt_guard.ui.importing import ConfigurationImportWidget
+from smt_guard.xlsx_reader import AmbiguousWorksheetError
 
 
 def sample_result() -> ImportResult:
@@ -79,7 +80,6 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
         widget.product_code_input.setText(" 501000087 ")
         widget.version_input.setText(" V1 ")
         widget.station_path_input.setText(" C:/imports/stations.xlsx ")
-        widget.station_sheet_input.setText(" Stations ")
 
     def test_executes_direct_import_and_previews_two_columns(self) -> None:
         workflow = FakeImportWorkflow(result=sample_result())
@@ -96,11 +96,12 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
                     Path("C:/imports/stations.xlsx"),
                     "501000087",
                     "V1",
-                    "Stations",
+                    "",
                 )
             ],
             workflow.calls,
         )
+        self.assertFalse(hasattr(widget, "station_sheet_input"))
         self.assertEqual(2, widget.assignment_table.columnCount())
         self.assertEqual(1, widget.assignment_table.rowCount())
         self.assertEqual("F-01", widget.assignment_table.item(0, 0).text())  # type: ignore[union-attr]
@@ -142,6 +143,40 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
         self.assertIn("未找到站位", widget.status_label.text())
         self.assertEqual("error", widget.status_label.property("feedbackState"))
         self.assertEqual([VoicePrompt.IMPORT_FAILED], announcer.prompts)
+
+    @patch("smt_guard.ui.importing.QInputDialog.getItem")
+    def test_asks_for_a_sheet_only_when_automatic_selection_is_ambiguous(
+        self,
+        get_item: object,
+    ) -> None:
+        result = sample_result()
+
+        class AmbiguousThenSuccessfulWorkflow(FakeImportWorkflow):
+            def import_configuration(
+                self,
+                station_path: Path,
+                *,
+                product_code: str,
+                version: str,
+                station_sheet: str,
+            ) -> ImportResult:
+                self.calls.append(
+                    ("configuration", station_path, product_code, version, station_sheet)
+                )
+                if not station_sheet:
+                    raise AmbiguousWorksheetError(("站位表 A", "站位表 B"))
+                return result
+
+        get_item.return_value = ("站位表 B", True)  # type: ignore[attr-defined]
+        workflow = AmbiguousThenSuccessfulWorkflow()
+        widget = self.make_widget(workflow)
+        self.fill_required_inputs(widget)
+
+        widget.station_import_button.click()
+
+        self.assertEqual("", workflow.calls[0][-1])
+        self.assertEqual("站位表 B", workflow.calls[1][-1])
+        self.assertEqual("success", widget.status_label.property("feedbackState"))
 
     def test_rejects_blank_required_input_before_calling_workflow(self) -> None:
         workflow = FakeImportWorkflow(result=sample_result())

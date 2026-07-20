@@ -1,11 +1,12 @@
 """Reusable visual building blocks for SMT Guard management pages."""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QVBoxLayout,
@@ -134,3 +135,35 @@ def set_feedback(label: QLabel, state: str, message: str) -> None:
         f"border: 1px solid {border}; border-radius: 8px; padding: 9px 12px;"
     )
     label.setText(message)
+
+
+def show_notification(
+    label: QLabel,
+    state: str,
+    message: str,
+    *,
+    duration_ms: int = 4000,
+) -> None:
+    """Show transient feedback without letting an older timer hide a newer message."""
+    set_feedback(label, state, message)
+    generation = int(label.property("notificationGeneration") or 0) + 1
+    label.setProperty("notificationGeneration", generation)
+    label.show()
+
+    def hide_if_current() -> None:
+        if label.property("notificationGeneration") == generation:
+            label.hide()
+
+    QTimer.singleShot(max(0, duration_ms), hide_if_current)
+
+
+def confirm_action(parent: QWidget | None, title: str, message: str) -> bool:
+    """Require an explicit confirmation for a destructive state transition."""
+    answer = QMessageBox.question(
+        parent,
+        title,
+        message,
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    )
+    return answer is QMessageBox.StandardButton.Yes

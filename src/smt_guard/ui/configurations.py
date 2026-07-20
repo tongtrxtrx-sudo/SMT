@@ -17,17 +17,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from smt_guard.bom import BomVersion
 from smt_guard.configuration import ConfigurationStatus, ProductConfigurationRecord
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
 from smt_guard.master_data import Station
 from smt_guard.scan import ProductConfiguration
 from smt_guard.ui.components import (
     PageHeader,
+    confirm_action,
     content_card,
     prepare_table,
     section_heading,
     set_feedback,
+    show_notification,
 )
 from smt_guard.ui.formatting import display_datetime
 from smt_guard.ui.tables import (
@@ -70,10 +71,6 @@ class ConfigurationRepository(Protocol):
     ) -> ProductConfigurationRecord: ...
 
 
-class BomVersionLookup(Protocol):
-    def get_by_id(self, bom_id: int) -> BomVersion: ...
-
-
 class StationResolver(Protocol):
     def resolve_station(self, station_code: str) -> Station: ...
 
@@ -91,7 +88,6 @@ class ConfigurationManagementWidget(QWidget):
         parent: QWidget | None = None,
         *,
         announcer: AnnouncementSink | None = None,
-        bom_repository: BomVersionLookup | None = None,
         master_data: StationResolver | None = None,
         layout_store: UiLayoutStore | None = None,
     ) -> None:
@@ -99,10 +95,8 @@ class ConfigurationManagementWidget(QWidget):
         self._repository = repository
         self._operator_provider = operator_provider
         self._announcer = announcer or SilentAnnouncementSink()
-        self._bom_repository = bom_repository
         self._master_data = master_data
         self._layout_store = layout_store
-        self._linked_boms: dict[int, BomVersion | None] = {}
         self._records: list[ProductConfigurationRecord] = []
         self._build_ui()
         self.refresh()
@@ -137,6 +131,7 @@ class ConfigurationManagementWidget(QWidget):
         splitter = QSplitter()
         self.splitter = splitter
         list_card = content_card()
+        self.configuration_list_card = list_card
         list_layout = QVBoxLayout(list_card)
         list_heading = QHBoxLayout()
         list_heading.addWidget(section_heading("配置版本", "选择后在右侧查看和维护"), 1)
@@ -172,10 +167,14 @@ class ConfigurationManagementWidget(QWidget):
         list_layout.addWidget(self.configuration_table, 1)
         splitter.addWidget(list_card)
         editor = content_card(object_name="detailCard")
+        self.configuration_detail_card = editor
         editor_layout = QVBoxLayout(editor)
         editor_layout.setContentsMargins(8, 8, 8, 8)
         editor_layout.setSpacing(5)
         editor_header = QHBoxLayout()
+        self.back_to_configurations_button = QPushButton("← 返回配置列表")
+        self.back_to_configurations_button.hide()
+        editor_header.addWidget(self.back_to_configurations_button)
         self.editor_label = QLabel("请选择配置")
         self.editor_label.setObjectName("detailTitle")
         self.editor_label.setWordWrap(True)
@@ -258,11 +257,14 @@ class ConfigurationManagementWidget(QWidget):
         self.version_card.hide()
         self.status_label = QLabel("就绪")
         set_feedback(self.status_label, "neutral", "就绪")
+        self.status_label.hide()
         layout.addWidget(self.status_label)
 
         self.refresh_button.clicked.connect(self.refresh)
         self.filter_input.returnPressed.connect(self.refresh)
         self.configuration_table.itemSelectionChanged.connect(self._render_selected)
+        self.configuration_table.cellClicked.connect(self._open_selected_detail)
+        self.back_to_configurations_button.clicked.connect(self._show_configuration_list)
         self.add_row_button.clicked.connect(self._add_row)
         self.remove_row_button.clicked.connect(self._remove_row)
         self.save_draft_button.clicked.connect(self._save_draft)
@@ -274,14 +276,34 @@ class ConfigurationManagementWidget(QWidget):
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
-        stacked = event.size().width() < 1050
-        if stacked == self._details_stacked:
+        narrow = event.size().width() < 1050
+        if narrow == self._details_stacked:
             return
-        self._details_stacked = stacked
-        self.splitter.setOrientation(
-            Qt.Orientation.Vertical if stacked else Qt.Orientation.Horizontal
-        )
-        self.splitter.setSizes([1, 1] if stacked else [2, 3])
+        self._details_stacked = narrow
+        self.splitter.setOrientation(Qt.Orientation.Horizontal)
+        if narrow:
+            self._show_configuration_list()
+        else:
+            self.configuration_list_card.show()
+            self.configuration_detail_card.show()
+            self.back_to_configurations_button.hide()
+            self.splitter.setSizes([2, 3])
+
+    @Slot(int, int)
+    def _open_selected_detail(self, _row: int, _column: int) -> None:
+        if not self._details_stacked:
+            return
+        self.configuration_list_card.hide()
+        self.configuration_detail_card.show()
+        self.back_to_configurations_button.show()
+
+    @Slot()
+    def _show_configuration_list(self) -> None:
+        if not self._details_stacked:
+            return
+        self.configuration_detail_card.hide()
+        self.configuration_list_card.show()
+        self.back_to_configurations_button.hide()
 
     @Slot()
     def refresh(self) -> None:
@@ -296,7 +318,6 @@ class ConfigurationManagementWidget(QWidget):
         )
         query = self.filter_input.text().strip().casefold()
         records = self._repository.list_all()
-        self._linked_boms.clear()
         self._records = [
             item for item in records if not query or query in self._record_search_text(item)
         ]
@@ -417,28 +438,9 @@ class ConfigurationManagementWidget(QWidget):
                 "已启用或历史版本不能直接修改；如需调整，请在下方复制为草稿。",
             )
 
-    def _linked_bom(self, record: ProductConfigurationRecord) -> BomVersion | None:
-        bom_id = record.configuration.bom_version_id
-        if bom_id is None or self._bom_repository is None:
-            return None
-        if bom_id not in self._linked_boms:
-            try:
-                self._linked_boms[bom_id] = self._bom_repository.get_by_id(bom_id)
-            except LookupError:
-                self._linked_boms[bom_id] = None
-        return self._linked_boms[bom_id]
-
     def _record_search_text(self, record: ProductConfigurationRecord) -> str:
         configuration = record.configuration
         return f"{configuration.product_code} {configuration.version}".casefold()
-
-    @staticmethod
-    def _bom_label(bom_id: int | None, bom: BomVersion | None) -> str:
-        if bom is not None:
-            return bom.version
-        if bom_id is None:
-            return "未关联"
-        return f"ID {bom_id}"
 
     def _selected(self) -> ProductConfigurationRecord | None:
         row = self.configuration_table.currentRow()
@@ -583,6 +585,13 @@ class ConfigurationManagementWidget(QWidget):
             self._announcer.announce(VoicePrompt.LIFECYCLE_FAILED)
             return
         configuration = record.configuration
+        if not confirm_action(
+            self,
+            "确认停用配置",
+            f"确认停用产品配置 {configuration.product_code}/{configuration.version}？\n"
+            "停用后不能用于新建扫码作业。",
+        ):
+            return
         try:
             self._repository.disable(
                 configuration.product_code,
@@ -613,7 +622,7 @@ class ConfigurationManagementWidget(QWidget):
                 return
 
     def _show_success(self, message: str) -> None:
-        set_feedback(self.status_label, "success", message)
+        show_notification(self.status_label, "success", message)
 
     def _show_error(self, message: str) -> None:
-        set_feedback(self.status_label, "error", message)
+        show_notification(self.status_label, "error", message, duration_ms=6500)

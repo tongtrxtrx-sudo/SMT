@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QLocale
 from PySide6.QtTextToSpeech import QTextToSpeech
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication
 
 from smt_guard.exporter import CsvRecordExporter
 from smt_guard.feedback import (
@@ -28,7 +28,6 @@ from smt_guard.platform import (
 )
 from smt_guard.sqlite import (
     SqliteAuditRepository,
-    SqliteBomRepository,
     SqliteDatabase,
     SqliteMasterDataRepository,
     SqliteProductConfigurationRepository,
@@ -57,7 +56,6 @@ class ApplicationRuntime:
         master_data: SqliteMasterDataRepository,
         configurations: SqliteProductConfigurationRepository,
         runs: SqliteProductionRunRepository,
-        boms: SqliteBomRepository,
         audits: SqliteAuditRepository,
         operator_session: OperatorSession,
         scan_widget: ScanWidget,
@@ -68,7 +66,6 @@ class ApplicationRuntime:
         self.master_data = master_data
         self.configurations = configurations
         self.runs = runs
-        self.boms = boms
         self.audits = audits
         self.operator_session = operator_session
         self.scan_widget = scan_widget
@@ -102,7 +99,6 @@ def create_runtime(
         SqliteDatabase(connection).initialize()
         master_data = SqliteMasterDataRepository(connection)
         configurations = SqliteProductConfigurationRepository(connection)
-        boms = SqliteBomRepository(connection)
         runs = SqliteProductionRunRepository(connection)
         audits = SqliteAuditRepository(connection)
         operator_store = LastOperatorStore(data_directory / "last_operator.txt")
@@ -116,7 +112,6 @@ def create_runtime(
         )
 
         announcer = announcements or SilentAnnouncementSink()
-        operator_widget = OperatorSessionWidget(operator_session, announcer=announcer)
         master_data_widget = DeviceStationWidget(
             master_data,
             operator_provider=operator_session.require,
@@ -138,9 +133,11 @@ def create_runtime(
             announcer=announcer,
             layout_store=layout_store,
         )
-        # The historical BOM repository remains readable for compatibility,
-        # but BOM management is no longer part of the operator workflow.
-        bom_widget = QWidget()
+        operator_widget = OperatorSessionWidget(
+            operator_session,
+            announcer=announcer,
+            change_guard=scan_widget.confirm_operator_change,
+        )
         configuration_widget = ConfigurationManagementWidget(
             configurations,
             operator_session.require,
@@ -172,7 +169,6 @@ def create_runtime(
             scan_widget,
             master_data_widget,
             import_widget,
-            bom_widget,
             configuration_widget,
             run_widget,
             records_widget,
@@ -213,7 +209,6 @@ def create_runtime(
         master_data,
         configurations,
         runs,
-        boms,
         audits,
         operator_session,
         scan_widget,

@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSplitter,
     QTableWidget,
@@ -30,10 +29,12 @@ from smt_guard.records import Attempt
 from smt_guard.run import ProductionRun, RunStationState, RunStatus
 from smt_guard.ui.components import (
     PageHeader,
+    confirm_action,
     content_card,
     prepare_table,
     section_heading,
     set_feedback,
+    show_notification,
 )
 from smt_guard.ui.date_range import DateRangeFilter
 from smt_guard.ui.formatting import display_datetime
@@ -164,6 +165,7 @@ class ProductionRunManagementWidget(QWidget):
         splitter = QSplitter()
         self.splitter = splitter
         run_list_card = content_card()
+        self.run_list_card = run_list_card
         run_list_layout = QVBoxLayout(run_list_card)
         run_list_heading = QHBoxLayout()
         run_list_heading.addWidget(section_heading("作业列表", "选择后查看右侧详情"), 1)
@@ -201,11 +203,16 @@ class ProductionRunManagementWidget(QWidget):
         run_list_layout.addWidget(self.run_table, 1)
         splitter.addWidget(run_list_card)
         right = QFrame()
+        self.run_detail_card = right
         right.setObjectName("runSummaryCard")
         right.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(8, 8, 8, 8)
         right_layout.setSpacing(5)
+        detail_header = QHBoxLayout()
+        self.back_to_runs_button = QPushButton("← 返回作业列表")
+        self.back_to_runs_button.hide()
+        detail_header.addWidget(self.back_to_runs_button)
         self.run_summary_title = QLabel("请选择作业")
         self.run_summary_title.setObjectName("detailTitle")
         self.run_summary_title.setWordWrap(False)
@@ -213,7 +220,8 @@ class ProductionRunManagementWidget(QWidget):
             QSizePolicy.Policy.Ignored,
             QSizePolicy.Policy.Preferred,
         )
-        right_layout.addWidget(self.run_summary_title)
+        detail_header.addWidget(self.run_summary_title, 1)
+        right_layout.addLayout(detail_header)
         chips = QHBoxLayout()
         self.run_status_chip = QLabel("状态 -")
         self.run_progress_chip = QLabel("0 / 0")
@@ -230,21 +238,6 @@ class ProductionRunManagementWidget(QWidget):
         self.run_progress_chip.setStyleSheet("background: #eff8ff; color: #175cd3;")
         self.run_ng_chip.setStyleSheet("background: #fef3f2; color: #d92d20;")
         right_layout.addLayout(chips)
-        self.snapshot_label = QLabel("请选择作业")
-        self.snapshot_label.setWordWrap(True)
-        self.snapshot_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored,
-            QSizePolicy.Policy.Minimum,
-        )
-        self.snapshot_scroll = QScrollArea()
-        self.snapshot_scroll.setWidgetResizable(True)
-        self.snapshot_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.snapshot_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.snapshot_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.snapshot_scroll.setMinimumHeight(58)
-        self.snapshot_scroll.setMaximumHeight(82)
-        self.snapshot_scroll.setWidget(self.snapshot_label)
-        right_layout.addWidget(self.snapshot_scroll)
         self.detail_tabs = QTabWidget()
         self.detail_tabs.setSizePolicy(
             QSizePolicy.Policy.Ignored,
@@ -321,6 +314,7 @@ class ProductionRunManagementWidget(QWidget):
 
         self.status_label = QLabel("就绪")
         set_feedback(self.status_label, "neutral", "就绪")
+        self.status_label.hide()
         layout.addWidget(self.status_label)
 
         self.query_button.clicked.connect(self.refresh)
@@ -329,6 +323,8 @@ class ProductionRunManagementWidget(QWidget):
         self.operator_input.returnPressed.connect(self.refresh)
         self.date_range.range_selected.connect(self.refresh)
         self.run_table.itemSelectionChanged.connect(self._render_selected)
+        self.run_table.cellClicked.connect(self._open_selected_detail)
+        self.back_to_runs_button.clicked.connect(self._show_run_list)
         self.start_button.clicked.connect(self.start_requested.emit)
         self.resume_button.clicked.connect(self._resume)
         self.interrupt_button.clicked.connect(self._interrupt)
@@ -382,7 +378,7 @@ class ProductionRunManagementWidget(QWidget):
             self.run_status_chip.setText("状态 -")
             self.run_progress_chip.setText("0 / 0")
             self.run_ng_chip.setText("NG 0")
-            self.snapshot_label.setText("没有匹配的作业")
+            self.run_summary_title.setToolTip("")
             self.station_table.setRowCount(0)
             self.attempt_table.setRowCount(0)
             self.attempt_summary_label.setText("扫码记录：0 条")
@@ -393,7 +389,7 @@ class ProductionRunManagementWidget(QWidget):
             self.interrupt_button.hide()
             self.view_records_button.setEnabled(False)
             self.export_button.setEnabled(False)
-            set_feedback(
+            show_notification(
                 self.status_label,
                 "neutral",
                 f"没有匹配的作业 · 更新于 {self._clock():%H:%M}",
@@ -421,8 +417,7 @@ class ProductionRunManagementWidget(QWidget):
             f"结束/中断：{display_datetime(run.completed_at or run.interrupted_at) or '-'}\n"
             f"中断原因：{run.interruption_reason or '-'}"
         )
-        self.snapshot_label.setText(snapshot)
-        self.snapshot_label.setToolTip(snapshot)
+        self.run_summary_title.setToolTip(snapshot)
         states = self._repository.list_station_states(run.run_id)
         self.station_table.setRowCount(len(states))
         for row, state in enumerate(states):
@@ -470,17 +465,34 @@ class ProductionRunManagementWidget(QWidget):
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
-        # At common 1366-wide laptop windows the reduced five-column list and
-        # detail pane still fit side by side and preserve useful vertical table
-        # space.  Stack only in genuinely narrow ordinary windows.
-        stacked = event.size().width() < 1050
-        if stacked == self._details_stacked:
+        narrow = event.size().width() < 1050
+        if narrow == self._details_stacked:
             return
-        self._details_stacked = stacked
-        self.splitter.setOrientation(
-            Qt.Orientation.Vertical if stacked else Qt.Orientation.Horizontal
-        )
-        self.splitter.setSizes([1, 1] if stacked else [2, 3])
+        self._details_stacked = narrow
+        self.splitter.setOrientation(Qt.Orientation.Horizontal)
+        if narrow:
+            self._show_run_list()
+        else:
+            self.run_list_card.show()
+            self.run_detail_card.show()
+            self.back_to_runs_button.hide()
+            self.splitter.setSizes([2, 3])
+
+    @Slot(int, int)
+    def _open_selected_detail(self, _row: int, _column: int) -> None:
+        if not self._details_stacked:
+            return
+        self.run_list_card.hide()
+        self.run_detail_card.show()
+        self.back_to_runs_button.show()
+
+    @Slot()
+    def _show_run_list(self) -> None:
+        if not self._details_stacked:
+            return
+        self.run_detail_card.hide()
+        self.run_list_card.show()
+        self.back_to_runs_button.hide()
 
     @Slot()
     def _resume(self) -> None:
@@ -506,6 +518,12 @@ class ProductionRunManagementWidget(QWidget):
         reason = self.interruption_reason_input.text().strip()
         if not reason:
             self._show_error("中断原因不能为空")
+            return
+        if not confirm_action(
+            self,
+            "确认中断作业",
+            f"确认中断作业 {run.job_number}？\n中断后需要从作业记录中恢复才能继续扫码。",
+        ):
             return
         self.interrupt_requested.emit(run.run_id, reason)
         self._show_success(f"已请求中断作业 {run.job_number}")
@@ -556,7 +574,7 @@ class ProductionRunManagementWidget(QWidget):
         }[self.status_combo.currentIndex()]
 
     def _show_success(self, message: str) -> None:
-        set_feedback(self.status_label, "success", message)
+        show_notification(self.status_label, "success", message)
 
     def _show_error(self, message: str) -> None:
-        set_feedback(self.status_label, "error", message)
+        show_notification(self.status_label, "error", message, duration_ms=6500)

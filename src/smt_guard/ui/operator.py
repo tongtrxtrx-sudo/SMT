@@ -1,5 +1,7 @@
 """Application-wide operator sign-in control."""
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import (
     QLabel,
@@ -25,11 +27,13 @@ class OperatorSessionWidget(QWidget):
         parent: QWidget | None = None,
         *,
         announcer: AnnouncementSink | None = None,
+        change_guard: Callable[[str], bool] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("operatorBar")
         self._session = session
         self._announcer = announcer or SilentAnnouncementSink()
+        self._change_guard = change_guard
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 8, 6, 8)
@@ -58,8 +62,20 @@ class OperatorSessionWidget(QWidget):
 
     @Slot()
     def _sign_in(self) -> None:
+        requested_operator = self.operator_input.text().strip()
+        current_operator = self._session.operator
+        if (
+            current_operator
+            and requested_operator
+            and requested_operator != current_operator
+            and self._change_guard is not None
+            and not self._change_guard(requested_operator)
+        ):
+            self.status_label.setStyleSheet("color: #667085;")
+            self.status_label.setText("已取消切换操作员")
+            return
         try:
-            operator = self._session.sign_in(self.operator_input.text())
+            operator = self._session.sign_in(requested_operator)
         except ValueError as error:
             self.status_label.setStyleSheet("color: #b42318;")
             self.status_label.setText(str(error))

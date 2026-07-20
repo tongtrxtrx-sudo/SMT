@@ -29,6 +29,7 @@ from smt_guard.ui.components import (
     prepare_table,
     section_heading,
     set_feedback,
+    show_notification,
 )
 from smt_guard.ui.date_range import DateRangeFilter
 from smt_guard.ui.formatting import display_datetime
@@ -227,6 +228,7 @@ class AuditLogWidget(QWidget):
             "neutral",
             "尚未查询；打开本页后将自动加载最新审计日志",
         )
+        self.status_label.hide()
         layout.addWidget(self.status_label)
         self.query_button.clicked.connect(self.refresh)
         self.entity_key_input.returnPressed.connect(self.refresh)
@@ -274,7 +276,7 @@ class AuditLogWidget(QWidget):
             )
             self.audit_stack.setCurrentWidget(self.empty_state)
             self._clear_detail()
-        set_feedback(
+        show_notification(
             self.status_label,
             "neutral",
             f"查询完成：{len(entries)} 条审计日志（最新优先） · 更新于 {self._clock():%H:%M}",
