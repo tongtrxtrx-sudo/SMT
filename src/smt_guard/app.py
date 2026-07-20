@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QLocale
 from PySide6.QtTextToSpeech import QTextToSpeech
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from smt_guard.exporter import CsvRecordExporter
 from smt_guard.feedback import (
@@ -35,7 +35,6 @@ from smt_guard.sqlite import (
     SqliteProductionRunRepository,
 )
 from smt_guard.ui.audits import AuditLogWidget
-from smt_guard.ui.boms import BomManagementWidget
 from smt_guard.ui.configurations import ConfigurationManagementWidget
 from smt_guard.ui.importing import ConfigurationImportWidget
 from smt_guard.ui.main_window import MainWindow
@@ -113,7 +112,6 @@ def create_runtime(
             OpenpyxlWorkbookReader(),
             master_data,
             configurations,
-            boms,
             operator_provider=operator_session.require,
         )
 
@@ -140,17 +138,14 @@ def create_runtime(
             announcer=announcer,
             layout_store=layout_store,
         )
-        bom_widget = BomManagementWidget(
-            boms,
-            operator_session.require,
-            announcer=announcer,
-            layout_store=layout_store,
-        )
+        # The historical BOM repository remains readable for compatibility,
+        # but BOM management is no longer part of the operator workflow.
+        bom_widget = QWidget()
         configuration_widget = ConfigurationManagementWidget(
             configurations,
             operator_session.require,
             announcer=announcer,
-            bom_repository=boms,
+            master_data=master_data,
             layout_store=layout_store,
         )
         run_widget = ProductionRunManagementWidget(
@@ -169,12 +164,9 @@ def create_runtime(
         audit_widget = AuditLogWidget(audits, clock=clock, layout_store=layout_store)
         import_widget.import_completed.connect(scan_widget.refresh_configurations)
         import_widget.import_completed.connect(configuration_widget.refresh)
-        import_widget.bom_imported.connect(bom_widget.refresh)
         master_data_widget.master_data_changed.connect(scan_widget.refresh_configurations)
         master_data_widget.master_data_changed.connect(configuration_widget.refresh)
-        configuration_widget.configurations_changed.connect(
-            scan_widget.refresh_configurations
-        )
+        configuration_widget.configurations_changed.connect(scan_widget.refresh_configurations)
         scan_widget.run_changed.connect(run_widget.refresh)
         window = MainWindow(
             scan_widget,
@@ -189,7 +181,7 @@ def create_runtime(
             layout_store=layout_store,
         )
         run_widget.start_requested.connect(lambda: window.tab_widget.setCurrentIndex(0))
-        for import_requester in (scan_widget, bom_widget, configuration_widget):
+        for import_requester in (scan_widget, configuration_widget):
             import_requester.import_requested.connect(
                 lambda: window.tab_widget.setCurrentIndex(window.IMPORT_TAB)
             )
@@ -205,6 +197,7 @@ def create_runtime(
             scan_widget.interrupt_active_run("切换操作员")
 
         operator_widget.operator_changed.connect(operator_changed)
+
         # Keep the preference store alive through the signal closure for the full UI lifetime.
         def save_operator(operator: str) -> None:
             operator_store.save(operator)

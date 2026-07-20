@@ -47,6 +47,7 @@ class SqliteProductionRunTests(unittest.TestCase):
         )
 
         restored = SqliteProductionRunRepository(self.connection).get("RUN-ZERO")
+        self.assertEqual("260714-001", restored.job_number)
         self.assertEqual(RunStatus.INTERRUPTED, restored.status)
         self.assertEqual("OP-01", restored.operator)
         self.assertEqual(0, restored.completed_stations)
@@ -142,6 +143,27 @@ class SqliteProductionRunTests(unittest.TestCase):
         self.assertEqual([("SMT-01", "F-01", False)], [
             (item.device_code, item.station_code, item.completed) for item in states
         ])
+
+    def test_allocates_stable_short_job_numbers_and_searches_by_them(self) -> None:
+        first = self.repository.start(
+            "RUN-LONG-INTERNAL-1",
+            self.configuration,
+            operator="OP-01",
+            started_at=self.started_at,
+        )
+        second = self.repository.start(
+            "RUN-LONG-INTERNAL-2",
+            self.configuration,
+            operator="OP-01",
+            started_at=self.started_at,
+        )
+
+        self.assertEqual("260714-001", first.job_number)
+        self.assertEqual("260714-002", second.job_number)
+        self.assertEqual(
+            ["RUN-LONG-INTERNAL-2"],
+            [run.run_id for run in self.repository.search_runs("260714-002")],
+        )
 
 
 if __name__ == "__main__":

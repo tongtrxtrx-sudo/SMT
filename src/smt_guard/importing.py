@@ -51,7 +51,7 @@ class BomSink(Protocol):
 class ImportResult:
     """Imported BOM and configuration data used by the preview screen."""
 
-    document: BomDocument
+    document: BomDocument | None
     configuration: ProductConfiguration
 
 
@@ -76,6 +76,35 @@ class ConfigurationImportService:
         self._operator_provider = operator_provider
         self._document: BomDocument | None = None
         self._bom_version: BomVersion | None = None
+
+    def import_configuration(
+        self,
+        station_path: Path,
+        *,
+        product_code: str,
+        version: str,
+        station_sheet: str,
+    ) -> ImportResult:
+        """Import a station/material configuration without requiring a BOM file."""
+        normalized_product = product_code.strip()
+        normalized_version = version.strip()
+        normalized_sheet = station_sheet.strip()
+        if not normalized_product:
+            raise ImportValidationError("Product code is required")
+        if not normalized_version:
+            raise ImportValidationError("Product configuration version is required")
+        if not normalized_sheet:
+            raise ImportValidationError("Station worksheet name is required")
+
+        station_rows = self._reader.read_sheet(station_path, normalized_sheet)
+        configuration = ProductConfigurationBuilder(self._master_data).build(
+            normalized_product,
+            normalized_version,
+            {},
+            station_rows,
+        )
+        self._configurations.save(configuration, actor=self._current_operator())
+        return ImportResult(None, configuration)
 
     def import_bom(self, bom_path: Path, *, version: str | None = None) -> BomDocument:
         """Load and retain one validated BOM for a later station-table import."""

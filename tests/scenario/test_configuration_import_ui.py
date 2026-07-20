@@ -1,12 +1,14 @@
 import os
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from openpyxl import load_workbook
 from PySide6.QtWidgets import QApplication
 
-from smt_guard.bom import BomDocument, Material, Product
 from smt_guard.configuration import ImportValidationError
 from smt_guard.feedback import VoicePrompt
 from smt_guard.importing import ImportResult
@@ -15,35 +17,31 @@ from smt_guard.ui.importing import ConfigurationImportWidget
 
 
 def sample_result() -> ImportResult:
-    document = BomDocument(
-        product=Product("501000087", "BOM-1", "Control board", "控制板", "大板"),
-        materials={"013000081": Material("013000081", "端子线", "26AWG", "1", "电子物料/电子线")},
+    return ImportResult(
+        None,
+        ProductConfiguration("501000087", "V1", {("SMT-01", "F-01"): "013000081"}),
     )
-    configuration = ProductConfiguration("501000087", "V1", {("SMT-01", "F-01"): "013000081"})
-    return ImportResult(document, configuration)
 
 
 class FakeImportWorkflow:
-    def __init__(self, result: ImportResult | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        result: ImportResult | None = None,
+        error: Exception | None = None,
+    ) -> None:
         self.result = result
         self.error = error
         self.calls: list[tuple[object, ...]] = []
 
-    def import_bom(self, bom_path: Path, *, version: str | None = None) -> BomDocument:
-        del version
-        self.calls.append(("bom", bom_path))
-        if self.result is None:
-            raise AssertionError("Fake result was not configured")
-        return self.result.document
-
-    def import_station_table(
+    def import_configuration(
         self,
         station_path: Path,
         *,
+        product_code: str,
         version: str,
         station_sheet: str,
     ) -> ImportResult:
-        self.calls.append(("stations", station_path, version, station_sheet))
+        self.calls.append(("configuration", station_path, product_code, version, station_sheet))
         if self.error is not None:
             raise self.error
         if self.result is None:
@@ -65,12 +63,7 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         application = QApplication.instance()
-        if application is None:
-            cls.app = QApplication([])
-        elif isinstance(application, QApplication):
-            cls.app = application
-        else:
-            raise RuntimeError("A non-GUI Qt application already exists")
+        cls.app = application if isinstance(application, QApplication) else QApplication([])
 
     def make_widget(
         self,
@@ -81,108 +74,101 @@ class ConfigurationImportWidgetTests(unittest.TestCase):
         self.addCleanup(widget.close)
         return widget
 
-    def fill_required_inputs(self, widget: ConfigurationImportWidget) -> None:
-        widget.bom_path_input.setText(" C:/imports/bom.xlsx ")
+    @staticmethod
+    def fill_required_inputs(widget: ConfigurationImportWidget) -> None:
+        widget.product_code_input.setText(" 501000087 ")
+        widget.version_input.setText(" V1 ")
         widget.station_path_input.setText(" C:/imports/stations.xlsx ")
         widget.station_sheet_input.setText(" Stations ")
-        widget.version_input.setText(" V1 ")
 
-    def test_executes_import_and_previews_result(self) -> None:
+    def test_executes_direct_import_and_previews_two_columns(self) -> None:
         workflow = FakeImportWorkflow(result=sample_result())
         announcer = FakeAnnouncementSink()
         widget = self.make_widget(workflow, announcer)
         self.fill_required_inputs(widget)
 
-        widget.bom_import_button.click()
-        self.assertTrue(widget.bom_step.isHidden())
-        self.assertFalse(widget.station_step.isHidden())
-        self.assertIn("501000087", widget.bom_summary_label.text())
-        widget.review_button.click()
-        self.assertFalse(widget.validation_step.isHidden())
         widget.station_import_button.click()
 
         self.assertEqual(
             [
-                ("bom", Path("C:/imports/bom.xlsx")),
-                ("stations", Path("C:/imports/stations.xlsx"), "V1", "Stations"),
+                (
+                    "configuration",
+                    Path("C:/imports/stations.xlsx"),
+                    "501000087",
+                    "V1",
+                    "Stations",
+                )
             ],
             workflow.calls,
         )
-        self.assertIn("501000087", widget.product_label.text())
-        self.assertIn("1", widget.material_count_label.text())
+        self.assertEqual(2, widget.assignment_table.columnCount())
         self.assertEqual(1, widget.assignment_table.rowCount())
-        material_item = widget.assignment_table.item(0, 2)
-        assert material_item is not None
-        self.assertEqual("013000081", material_item.text())
+        self.assertEqual("F-01", widget.assignment_table.item(0, 0).text())  # type: ignore[union-attr]
+        self.assertEqual("013000081", widget.assignment_table.item(0, 1).text())  # type: ignore[union-attr]
         self.assertEqual("success", widget.status_label.property("feedbackState"))
-        self.assertFalse(widget.station_import_button.isEnabled())
-        self.assertIn("已启用", widget.validation_label.text())
-        self.assertEqual(
-            [VoicePrompt.BOM_IMPORTED, VoicePrompt.CONFIGURATION_IMPORTED],
-            announcer.prompts,
-        )
+        self.assertEqual("导入并使用", widget.station_import_button.text())
+        self.assertIn("已启用，可直接开始扫码", widget.status_label.text())
+        self.assertEqual([VoicePrompt.CONFIGURATION_IMPORTED], announcer.prompts)
 
-    def test_exposes_drag_drop_zones_with_selected_file_feedback(self) -> None:
+    @patch("smt_guard.ui.importing.QFileDialog.getSaveFileName")
+    def test_downloads_a_two_column_template(self, get_save_file_name: object) -> None:
         widget = self.make_widget(FakeImportWorkflow(result=sample_result()))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "configuration.xlsx"
+            get_save_file_name.return_value = (str(path), "Excel 工作簿 (*.xlsx)")  # type: ignore[attr-defined]
 
-        self.assertTrue(widget.bom_drop_zone.acceptDrops())
+            widget.template_button.click()
+
+            workbook = load_workbook(path, read_only=True)
+            try:
+                sheet = workbook["Worksheet"]
+                self.assertEqual(("站位编码", "物料编码"), next(sheet.values))
+            finally:
+                workbook.close()
+
+    def test_exposes_single_drag_drop_zone_with_selected_file_feedback(self) -> None:
+        widget = self.make_widget(FakeImportWorkflow(result=sample_result()))
         self.assertTrue(widget.station_drop_zone.acceptDrops())
-        widget.bom_path_input.setText("C:/imports/bom.xlsx")
         widget.station_path_input.setText("C:/imports/stations.xlsx")
-
-        self.assertEqual("bom.xlsx", widget.bom_drop_zone.path_label.text())
         self.assertEqual("stations.xlsx", widget.station_drop_zone.path_label.text())
 
     def test_displays_workflow_error_without_modal_dialog(self) -> None:
-        workflow = FakeImportWorkflow(error=ImportValidationError("Row 7: unknown material"))
+        workflow = FakeImportWorkflow(error=ImportValidationError("Row 7: unknown station"))
         announcer = FakeAnnouncementSink()
         widget = self.make_widget(workflow, announcer)
         self.fill_required_inputs(widget)
-
-        widget.bom_import_button.click()
-        widget.review_button.click()
         widget.station_import_button.click()
-
-        self.assertIn("Row 7", widget.status_label.text())
+        self.assertIn("第 7 行", widget.status_label.text())
+        self.assertIn("未找到站位", widget.status_label.text())
         self.assertEqual("error", widget.status_label.property("feedbackState"))
         self.assertEqual([VoicePrompt.IMPORT_FAILED], announcer.prompts)
 
-    def test_translates_wrong_import_order_into_operator_guidance(self) -> None:
+    def test_rejects_blank_required_input_before_calling_workflow(self) -> None:
+        workflow = FakeImportWorkflow(result=sample_result())
+        widget = self.make_widget(workflow)
+        widget.station_path_input.setText("C:/imports/stations.xlsx")
+        widget.station_import_button.click()
+        self.assertEqual([], workflow.calls)
+        self.assertIn("产品编码", widget.status_label.text())
+
+    def test_translates_a_duplicate_configuration_error(self) -> None:
         workflow = FakeImportWorkflow(
-            error=ImportValidationError("Import a BOM before importing a station table")
+            error=ValueError("Duplicate product configuration: 501000087/V1")
         )
         widget = self.make_widget(workflow)
         self.fill_required_inputs(widget)
 
         widget.station_import_button.click()
 
-        self.assertEqual("请先导入 BOM，再导入站位表。", widget.status_label.text())
-        self.assertNotIn("Import", widget.status_label.text())
-
-    def test_rejects_blank_required_input_before_calling_workflow(self) -> None:
-        workflow = FakeImportWorkflow(result=sample_result())
-        announcer = FakeAnnouncementSink()
-        widget = self.make_widget(workflow, announcer)
-        widget.bom_path_input.clear()
-
-        widget.bom_import_button.click()
-
-        self.assertEqual([], workflow.calls)
-        self.assertIn("BOM", widget.status_label.text())
-        self.assertEqual([VoicePrompt.IMPORT_FAILED], announcer.prompts)
+        self.assertIn("产品配置已存在", widget.status_label.text())
+        self.assertIn("请填写新的配置版本", widget.status_label.text())
 
     def test_full_screen_workflow_stays_centered_at_a_readable_width(self) -> None:
         widget = self.make_widget(FakeImportWorkflow(result=sample_result()))
         widget.resize(1920, 900)
         widget.show()
         self.app.processEvents()
-
-        self.assertLessEqual(widget.workflow_shell.width(), 1280)
+        self.assertLessEqual(widget.workflow_shell.width(), 1080)
         left_margin = widget.workflow_shell.geometry().left()
         right_margin = widget.width() - widget.workflow_shell.geometry().right() - 1
         self.assertLessEqual(abs(left_margin - right_margin), 24)
-        self.assertGreater(widget.workflow_shell.width(), 1000)
-
-
-if __name__ == "__main__":
-    unittest.main()

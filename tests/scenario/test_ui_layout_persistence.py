@@ -21,7 +21,9 @@ from smt_guard.ui.tables import (
     enable_splitter_layout,
     enable_table_layout,
     reset_persistent_layouts,
+    set_column_minimum_widths,
     set_column_widths,
+    set_managed_column_hidden,
     set_responsive_columns,
 )
 
@@ -166,6 +168,24 @@ class UiLayoutPersistenceTests(unittest.TestCase):
 
         self.assertFalse(table.isColumnHidden(1))
 
+    def test_managed_hidden_column_survives_restore_and_resize(self) -> None:
+        store = UiLayoutStore(self.settings_path)
+        table = self._table(store, width=800)
+        set_managed_column_hidden(table, 1, True)
+        table.horizontalHeader().resizeSection(0, 220)
+        QTest.qWait(320)
+
+        restored = self._table(UiLayoutStore(self.settings_path), width=640)
+        set_managed_column_hidden(restored, 1, True)
+        restored.resize(720, 320)
+        self.app.processEvents()
+        QTest.qWait(20)
+
+        self.assertTrue(restored.isColumnHidden(1))
+
+        set_managed_column_hidden(restored, 1, False)
+        self.assertFalse(restored.isColumnHidden(1))
+
     def test_visible_columns_refill_width_when_resized_within_same_breakpoint(self) -> None:
         table = self._table(
             UiLayoutStore(self.settings_path),
@@ -184,6 +204,48 @@ class UiLayoutPersistenceTests(unittest.TestCase):
         )
 
         self.assertGreaterEqual(visible_width, table.viewport().width() - 8)
+
+    def test_restored_columns_refill_same_size_viewport(self) -> None:
+        table = self._table(UiLayoutStore(self.settings_path), width=640)
+        header = table.horizontalHeader()
+        for column in range(table.columnCount()):
+            header.resizeSection(column, 60)
+        QTest.qWait(320)
+
+        restored = self._table(UiLayoutStore(self.settings_path), width=640)
+        visible_width = sum(
+            restored.columnWidth(column)
+            for column in range(restored.columnCount())
+            if not restored.isColumnHidden(column)
+        )
+
+        self.assertGreaterEqual(visible_width, restored.viewport().width() - 8)
+
+    def test_restored_column_respects_page_minimum_width(self) -> None:
+        store = UiLayoutStore(self.settings_path)
+        table = QTableWidget(0, 3)
+        self.addCleanup(table.close)
+        set_column_widths(table, (150, 150, 150))
+        set_column_minimum_widths(table, (132, 48, 48))
+        set_responsive_columns(table, stretch=(1, 2))
+        enable_table_layout(table, "minimum/table", store)
+        table.resize(640, 320)
+        table.show()
+        QTest.qWait(30)
+        table.horizontalHeader().resizeSection(0, 70)
+        QTest.qWait(320)
+
+        restored = QTableWidget(0, 3)
+        self.addCleanup(restored.close)
+        set_column_widths(restored, (150, 150, 150))
+        set_column_minimum_widths(restored, (132, 48, 48))
+        set_responsive_columns(restored, stretch=(1, 2))
+        enable_table_layout(restored, "minimum/table", UiLayoutStore(self.settings_path))
+        restored.resize(640, 320)
+        restored.show()
+        QTest.qWait(30)
+
+        self.assertGreaterEqual(restored.columnWidth(0), 132)
 
     def test_narrow_columns_leave_no_blank_bands_after_narrow_state_restore(self) -> None:
         store = UiLayoutStore(self.settings_path)

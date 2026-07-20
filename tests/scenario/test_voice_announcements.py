@@ -93,7 +93,7 @@ class VoiceAnnouncementTests(unittest.TestCase):
         FakeSpeechEngine.created = []
 
     def test_prompt_catalog_contains_only_fixed_operator_phrases(self) -> None:
-        self.assertEqual(26, len(VoicePrompt))
+        self.assertEqual(25, len(VoicePrompt))
         for prompt in VoicePrompt:
             with self.subTest(prompt=prompt.name):
                 self.assertTrue(prompt.value)
@@ -123,10 +123,10 @@ class VoiceAnnouncementTests(unittest.TestCase):
 
         engine.rate = 0.8
         engine.volume = 0.1
-        announcer.announce(VoicePrompt.SCAN_DEVICE)
+        announcer.announce(VoicePrompt.SCAN_STATION)
         self.assertEqual(-0.3, engine.rate)
         self.assertEqual(1.0, engine.volume)
-        self.assertEqual(["请扫码设备码"], engine.spoken)
+        self.assertEqual(["请扫码站位码"], engine.spoken)
 
     def test_factory_tries_winrt_when_sapi_has_no_chinese_voice(self) -> None:
         FakeSpeechEngine.voice_locales["sapi"] = ["en_US"]

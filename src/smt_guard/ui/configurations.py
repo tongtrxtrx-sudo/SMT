@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 from smt_guard.bom import BomVersion
 from smt_guard.configuration import ConfigurationStatus, ProductConfigurationRecord
 from smt_guard.feedback import AnnouncementSink, SilentAnnouncementSink, VoicePrompt
+from smt_guard.master_data import Station
 from smt_guard.scan import ProductConfiguration
 from smt_guard.ui.components import (
     PageHeader,
@@ -72,6 +74,10 @@ class BomVersionLookup(Protocol):
     def get_by_id(self, bom_id: int) -> BomVersion: ...
 
 
+class StationResolver(Protocol):
+    def resolve_station(self, station_code: str) -> Station: ...
+
+
 class ConfigurationManagementWidget(QWidget):
     """Edit drafts and manage released station-configuration versions."""
 
@@ -86,6 +92,7 @@ class ConfigurationManagementWidget(QWidget):
         *,
         announcer: AnnouncementSink | None = None,
         bom_repository: BomVersionLookup | None = None,
+        master_data: StationResolver | None = None,
         layout_store: UiLayoutStore | None = None,
     ) -> None:
         super().__init__(parent)
@@ -93,6 +100,7 @@ class ConfigurationManagementWidget(QWidget):
         self._operator_provider = operator_provider
         self._announcer = announcer or SilentAnnouncementSink()
         self._bom_repository = bom_repository
+        self._master_data = master_data
         self._layout_store = layout_store
         self._linked_boms: dict[int, BomVersion | None] = {}
         self._records: list[ProductConfigurationRecord] = []
@@ -105,7 +113,7 @@ class ConfigurationManagementWidget(QWidget):
         layout.addWidget(
             PageHeader(
                 "产品配置",
-                "选择产品版本查看站位物料关系；修改仅在草稿版本开放。",
+                "导入或选择产品版本，维护站位与物料的对应关系。",
             )
         )
         filter_card = content_card(object_name="filterCard")
@@ -115,11 +123,14 @@ class ConfigurationManagementWidget(QWidget):
         top = QHBoxLayout()
         top.addWidget(section_heading("筛选配置"))
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText("按产品编码、名称、规格或版本筛选")
+        self.filter_input.setPlaceholderText("按产品编码或版本筛选")
         self.filter_input.setClearButtonEnabled(True)
         self.refresh_button = QPushButton("刷新")
+        self.import_button = QPushButton("导入新配置")
+        self.import_button.setProperty("actionRole", "primary")
         top.addWidget(self.filter_input, 1)
         top.addWidget(self.refresh_button)
+        top.addWidget(self.import_button)
         filter_layout.addLayout(top)
         layout.addWidget(filter_card, 0, Qt.AlignmentFlag.AlignLeft)
 
@@ -134,9 +145,9 @@ class ConfigurationManagementWidget(QWidget):
         self.configuration_count_chip.setProperty("metricTone", "primary")
         list_heading.addWidget(self.configuration_count_chip)
         list_layout.addLayout(list_heading)
-        self.configuration_table = QTableWidget(0, 6)
+        self.configuration_table = QTableWidget(0, 5)
         self.configuration_table.setHorizontalHeaderLabels(
-            ("产品编码", "产品名称", "规格", "配置版本", "状态", "BOM 版本")
+            ("产品编码", "配置版本", "状态", "站位数", "更新时间")
         )
         self.configuration_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
@@ -144,20 +155,18 @@ class ConfigurationManagementWidget(QWidget):
         prepare_table(self.configuration_table)
         self.configuration_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.configuration_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.configuration_table.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        set_column_widths(self.configuration_table, (120, 120, 150, 130, 70, 130))
+        self.configuration_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        set_column_widths(self.configuration_table, (150, 140, 85, 75, 140))
         set_responsive_columns(
             self.configuration_table,
-            stretch=(0, 1, 2, 3, 5),
-            compact=(4,),
+            stretch=(0, 1, 4),
+            compact=(2, 3),
         )
         enable_table_layout(
             self.configuration_table,
             "configurations/list",
             self._layout_store,
-            narrow_hidden=(1, 2),
+            narrow_hidden=(3, 4),
             narrow_threshold=620,
         )
         list_layout.addWidget(self.configuration_table, 1)
@@ -187,20 +196,14 @@ class ConfigurationManagementWidget(QWidget):
         self.edit_hint_label.setMaximumHeight(42)
         set_feedback(self.edit_hint_label, "neutral", "请选择配置")
         editor_layout.addWidget(self.edit_hint_label)
-        self.import_button = QPushButton("前往导入配置")
-        self.import_button.setProperty("actionRole", "primary")
-        self.import_button.hide()
-        editor_layout.addWidget(self.import_button)
         editor_layout.addWidget(section_heading("站位物料关系", "草稿版本可直接编辑表格"))
-        self.assignment_table = QTableWidget(0, 3)
-        self.assignment_table.setHorizontalHeaderLabels(("设备编码", "站位编码", "物料编码"))
+        self.assignment_table = QTableWidget(0, 2)
+        self.assignment_table.setHorizontalHeaderLabels(("站位编码", "物料编码"))
         prepare_table(self.assignment_table)
         self.assignment_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.assignment_table.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        set_column_widths(self.assignment_table, (125, 125, 220))
-        set_responsive_columns(self.assignment_table, stretch=(0, 1, 2))
+        self.assignment_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        set_column_widths(self.assignment_table, (180, 280))
+        set_responsive_columns(self.assignment_table, stretch=(0, 1))
         enable_table_layout(
             self.assignment_table,
             "configurations/assignments",
@@ -211,12 +214,13 @@ class ConfigurationManagementWidget(QWidget):
         row_actions = QHBoxLayout()
         self.add_row_button = QPushButton("新增行")
         self.remove_row_button = QPushButton("删除行")
-        self.save_draft_button = QPushButton("保存修改")
+        self.save_draft_button = QPushButton("保存并校验")
         self.save_draft_button.setProperty("actionRole", "primary")
         row_actions.addWidget(self.add_row_button)
         row_actions.addWidget(self.remove_row_button)
         row_actions.addWidget(self.save_draft_button)
         self.validate_button = QPushButton("校验")
+        self.validate_button.hide()
         self.activate_button = QPushButton("启用")
         self.activate_button.setProperty("actionRole", "success")
         self.disable_button = QPushButton("停用")
@@ -236,9 +240,10 @@ class ConfigurationManagementWidget(QWidget):
             self._layout_store,
         )
         layout.addWidget(splitter, 1)
+        self._details_stacked = False
 
-        version_card = content_card(object_name="actionCard")
-        lifecycle = QHBoxLayout(version_card)
+        self.version_card = content_card(object_name="actionCard")
+        lifecycle = QHBoxLayout(self.version_card)
         lifecycle.setContentsMargins(8, 8, 8, 8)
         lifecycle.addWidget(section_heading("复制为草稿并编辑"))
         self.new_version_input = QLineEdit()
@@ -249,7 +254,8 @@ class ConfigurationManagementWidget(QWidget):
         lifecycle.addWidget(self.new_version_input, 1)
         lifecycle.addWidget(self.copy_button)
         lifecycle.addStretch(1)
-        layout.addWidget(version_card)
+        layout.addWidget(self.version_card)
+        self.version_card.hide()
         self.status_label = QLabel("就绪")
         set_feedback(self.status_label, "neutral", "就绪")
         layout.addWidget(self.status_label)
@@ -266,52 +272,78 @@ class ConfigurationManagementWidget(QWidget):
         self.disable_button.clicked.connect(self._disable_selected)
         self.import_button.clicked.connect(self.import_requested.emit)
 
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        stacked = event.size().width() < 1050
+        if stacked == self._details_stacked:
+            return
+        self._details_stacked = stacked
+        self.splitter.setOrientation(
+            Qt.Orientation.Vertical if stacked else Qt.Orientation.Horizontal
+        )
+        self.splitter.setSizes([1, 1] if stacked else [2, 3])
+
     @Slot()
     def refresh(self) -> None:
+        selected = self._selected()
+        selected_identity = (
+            None
+            if selected is None
+            else (
+                selected.configuration.product_code,
+                selected.configuration.version,
+            )
+        )
         query = self.filter_input.text().strip().casefold()
         records = self._repository.list_all()
         self._linked_boms.clear()
         self._records = [
-            item
-            for item in records
-            if not query
-            or query in self._record_search_text(item)
+            item for item in records if not query or query in self._record_search_text(item)
         ]
         self.configuration_count_chip.setText(f"{len(self._records)} 个")
         self.configuration_table.setRowCount(len(self._records))
         for row, record in enumerate(self._records):
             configuration = record.configuration
-            bom = self._linked_bom(record)
-            product = None if bom is None else bom.document.product
             values = (
                 configuration.product_code,
-                "—" if product is None or not product.name else product.name,
-                (
-                    "—"
-                    if product is None or not product.specification
-                    else product.specification
-                ),
                 configuration.version,
                 self._status_text(record),
-                self._bom_label(configuration.bom_version_id, bom),
+                str(len(configuration.assignments)),
+                display_datetime(record.created_at),
             )
             for column, value in enumerate(values):
                 self.configuration_table.setItem(row, column, readable_item(value))
         if self._records:
-            self.import_button.hide()
-            self.configuration_table.selectRow(0)
+            selected_row = next(
+                (
+                    index
+                    for index, item in enumerate(self._records)
+                    if (
+                        item.configuration.product_code,
+                        item.configuration.version,
+                    )
+                    == selected_identity
+                ),
+                0,
+            )
+            self.configuration_table.selectRow(selected_row)
             self._render_selected()
         else:
             self.editor_label.setText("没有匹配的配置，请先完成导入配置")
             self.configuration_status_chip.setText("未选择")
             self.assignment_count_chip.setText("站位 0")
-            self.import_button.show()
             self.assignment_table.setRowCount(0)
             self.activate_button.setEnabled(False)
             self.disable_button.setEnabled(False)
             self.add_row_button.setEnabled(False)
             self.remove_row_button.setEnabled(False)
             self.save_draft_button.setEnabled(False)
+            self.activate_button.hide()
+            self.disable_button.hide()
+            self.add_row_button.hide()
+            self.remove_row_button.hide()
+            self.save_draft_button.hide()
+            self.version_card.hide()
             set_feedback(self.edit_hint_label, "neutral", "请选择配置")
 
     @Slot()
@@ -323,38 +355,32 @@ class ConfigurationManagementWidget(QWidget):
             self.add_row_button.setEnabled(False)
             self.remove_row_button.setEnabled(False)
             self.save_draft_button.setEnabled(False)
+            self.activate_button.hide()
+            self.disable_button.hide()
+            self.add_row_button.hide()
+            self.remove_row_button.hide()
+            self.save_draft_button.hide()
+            self.version_card.hide()
             set_feedback(self.edit_hint_label, "neutral", "请选择配置")
             return
         active = record.status is ConfigurationStatus.ACTIVE
         self.activate_button.setEnabled(not active)
         self.disable_button.setEnabled(active)
         configuration = record.configuration
-        bom = self._linked_bom(record)
-        product = None if bom is None else bom.document.product
-        product_name = "—" if product is None or not product.name else product.name
-        specification = (
-            "—"
-            if product is None or not product.specification
-            else product.specification
-        )
         self.editor_label.setText(
             f"{configuration.product_code}/{configuration.version} | "
             f"{self._status_text(record)}\n"
-            f"产品：{product_name} | 规格：{specification} | "
-            f"BOM：{self._bom_label(configuration.bom_version_id, bom)} | "
             f"创建：{display_datetime(record.created_at)} by {record.created_by}"
         )
         assignments = sorted(configuration.assignments.items())
         self.configuration_status_chip.setText(self._status_text(record))
-        self.configuration_status_chip.setProperty(
-            "metricTone", "success" if active else "danger"
-        )
+        self.configuration_status_chip.setProperty("metricTone", "success" if active else "danger")
         self.configuration_status_chip.style().unpolish(self.configuration_status_chip)
         self.configuration_status_chip.style().polish(self.configuration_status_chip)
         self.assignment_count_chip.setText(f"站位 {len(assignments)}")
         self.assignment_table.setRowCount(len(assignments))
-        for row, ((device, station), material) in enumerate(assignments):
-            for column, value in enumerate((device, station, material)):
+        for row, ((_, station), material) in enumerate(assignments):
+            for column, value in enumerate((station, material)):
                 self.assignment_table.setItem(row, column, readable_item(value))
         editable = record.status is ConfigurationStatus.DRAFT
         self.assignment_table.setEditTriggers(
@@ -365,6 +391,12 @@ class ConfigurationManagementWidget(QWidget):
         self.add_row_button.setEnabled(editable)
         self.remove_row_button.setEnabled(editable)
         self.save_draft_button.setEnabled(editable)
+        self.add_row_button.setVisible(editable)
+        self.remove_row_button.setVisible(editable)
+        self.save_draft_button.setVisible(editable)
+        self.activate_button.setVisible(editable)
+        self.disable_button.setVisible(active)
+        self.version_card.setVisible(not editable)
         locked_reason = "已启用或历史版本不能直接修改，请先复制为草稿并编辑"
         for button in (
             self.add_row_button,
@@ -398,10 +430,7 @@ class ConfigurationManagementWidget(QWidget):
 
     def _record_search_text(self, record: ProductConfigurationRecord) -> str:
         configuration = record.configuration
-        bom = self._linked_bom(record)
-        product = None if bom is None else bom.document.product
-        product_text = "" if product is None else f"{product.name} {product.specification}"
-        return f"{configuration.product_code} {configuration.version} {product_text}".casefold()
+        return f"{configuration.product_code} {configuration.version}".casefold()
 
     @staticmethod
     def _bom_label(bom_id: int | None, bom: BomVersion | None) -> str:
@@ -430,18 +459,26 @@ class ConfigurationManagementWidget(QWidget):
         if record is None:
             raise ValueError("请先选择产品配置")
         assignments: dict[tuple[str, str], str] = {}
+        original = record.configuration
+        original_devices = {station: device for device, station in original.assignments}
         for row in range(self.assignment_table.rowCount()):
             values: list[str] = []
-            for column in range(3):
+            for column in range(2):
                 item = self.assignment_table.item(row, column)
                 values.append("" if item is None else item.text().strip())
             if not all(values):
-                raise ValueError(f"第 {row + 1} 行设备、站位和物料均不能为空")
-            key = (values[0], values[1])
+                raise ValueError(f"第 {row + 1} 行站位和物料均不能为空")
+            station, material = values
+            if self._master_data is not None:
+                device = self._master_data.resolve_station(station).device_code
+            elif station in original_devices:
+                device = original_devices[station]
+            else:
+                raise ValueError(f"无法确定站位 {station} 所属设备")
+            key = (device, station)
             if key in assignments:
-                raise ValueError(f"重复站位 {values[0]}/{values[1]}")
-            assignments[key] = values[2]
-        original = record.configuration
+                raise ValueError(f"重复站位 {station}")
+            assignments[key] = material
         return ProductConfiguration(
             original.product_code,
             original.version,
@@ -453,13 +490,16 @@ class ConfigurationManagementWidget(QWidget):
     def _save_draft(self) -> None:
         try:
             configuration = self._edited_configuration()
+            errors = self._repository.validate(configuration)
+            if errors:
+                raise ValueError("；".join(errors))
             self._repository.update_draft(configuration, actor=self._operator_provider())
         except (LookupError, ValueError) as error:
             self._show_error(str(error))
             return
         self.refresh()
         self._select_configuration(configuration.product_code, configuration.version)
-        self._show_success("修改已保存")
+        self._show_success("修改已保存，配置校验通过")
         self.configurations_changed.emit()
 
     @Slot()
@@ -531,9 +571,7 @@ class ConfigurationManagementWidget(QWidget):
             return
         self.refresh()
         self._select_configuration(configuration.product_code, configuration.version)
-        self._show_success(
-            f"已启用 {configuration.product_code}/{configuration.version}"
-        )
+        self._show_success(f"已启用 {configuration.product_code}/{configuration.version}")
         self._announcer.announce(VoicePrompt.CONFIGURATION_ACTIVATED)
         self.configurations_changed.emit()
 
@@ -557,9 +595,7 @@ class ConfigurationManagementWidget(QWidget):
             return
         self.refresh()
         self._select_configuration(configuration.product_code, configuration.version)
-        self._show_success(
-            f"已停用 {configuration.product_code}/{configuration.version}"
-        )
+        self._show_success(f"已停用 {configuration.product_code}/{configuration.version}")
         self._announcer.announce(VoicePrompt.CONFIGURATION_DISABLED)
         self.configurations_changed.emit()
 

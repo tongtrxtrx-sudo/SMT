@@ -21,7 +21,8 @@ class CsvRecordExporter:
     HEADERS = (
         "记录编号",
         "时间",
-        "运行编号",
+        "作业号",
+        "内部运行编号",
         "产品编码",
         "产品版本",
         "设备编码",
@@ -36,18 +37,27 @@ class CsvRecordExporter:
         self._repository = repository
 
     def export_run(self, run_id: str, path: Path) -> None:
+        job_number = self._job_number(run_id)
         with path.open("w", encoding="utf-8-sig", newline="") as stream:
             writer: csv.DictWriter[str] = csv.DictWriter(stream, fieldnames=self.HEADERS)
             writer.writeheader()
             for attempt in self._repository.list_for_run(run_id):
-                writer.writerow(self._to_row(attempt))
+                writer.writerow(self._to_row(attempt, job_number))
+
+    def _job_number(self, run_id: str) -> str:
+        getter = getattr(self._repository, "get", None)
+        if getter is None:
+            return run_id
+        persisted = getter(run_id)
+        return str(getattr(persisted, "job_number", run_id))
 
     @staticmethod
-    def _to_row(attempt: Attempt) -> dict[str, object]:
+    def _to_row(attempt: Attempt, job_number: str) -> dict[str, object]:
         row: dict[str, object] = {
             "记录编号": attempt.id if attempt.id is not None else "",
             "时间": attempt.timestamp.isoformat(),
-            "运行编号": attempt.run_id,
+            "作业号": job_number,
+            "内部运行编号": attempt.run_id,
             "产品编码": attempt.product_code,
             "产品版本": attempt.product_version,
             "设备编码": attempt.device_code,

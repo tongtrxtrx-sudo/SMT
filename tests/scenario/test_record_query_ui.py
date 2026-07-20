@@ -122,7 +122,7 @@ class RecordQueryWidgetTests(unittest.TestCase):
                 rows = list(csv.DictReader(stream))
 
         self.assertEqual(2, len(rows))
-        self.assertEqual({"RUN-1"}, {row["运行编号"] for row in rows})
+        self.assertEqual({"RUN-1"}, {row["内部运行编号"] for row in rows})
         self.assertIn("导出", self.widget.status_label.text())
         self.assertEqual([VoicePrompt.RECORDS_EXPORTED], self.announcements.prompts)
 

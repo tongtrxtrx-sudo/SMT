@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Protocol
 
 from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -41,6 +42,7 @@ from smt_guard.ui.tables import (
     enable_splitter_layout,
     enable_table_layout,
     readable_item,
+    set_column_minimum_widths,
     set_column_widths,
     set_responsive_columns,
 )
@@ -104,21 +106,22 @@ class ProductionRunManagementWidget(QWidget):
         layout.setSpacing(10)
         layout.addWidget(
             PageHeader(
-                "生产运行",
+                "作业记录",
                 "统一查看每次扫码作业的进度、NG、站位与扫码记录，并处理恢复、中断或导出。",
             )
         )
         filter_card = content_card(object_name="filterCard")
         filter_layout = QVBoxLayout(filter_card)
         filters = QHBoxLayout()
-        filters.addWidget(section_heading("筛选运行"))
+        filters.addWidget(section_heading("筛选作业"))
         self.query_input = QLineEdit()
-        self.query_input.setPlaceholderText("运行号、产品或版本")
+        self.query_input.setPlaceholderText("作业号、产品或版本")
         self.operator_input = QLineEdit()
         self.operator_input.setPlaceholderText("操作员")
+        self.operator_input.hide()
         self.status_combo = QComboBox()
         self.status_combo.addItems(("全部状态", "运行中", "已完成", "已中断"))
-        self.query_button = QPushButton("查询运行")
+        self.query_button = QPushButton("查询作业")
         self.query_button.setProperty("actionRole", "primary")
         self.query_button.setMinimumWidth(110)
         self.query_input.setMaximumWidth(560)
@@ -134,15 +137,20 @@ class ProductionRunManagementWidget(QWidget):
         self.started_to_input = self.date_range.started_to_input
         layout.addWidget(filter_card)
 
-        self.start_button = QPushButton("转到扫码开始")
+        self.start_button = QPushButton("转到扫码作业")
         self.start_button.setProperty("actionRole", "primary")
-        self.resume_button = QPushButton("恢复所选运行")
+        self.start_button.hide()
+        self.resume_button = QPushButton("恢复所选作业")
         self.resume_button.setProperty("actionRole", "success")
         self.view_records_button = QPushButton("查看扫码记录")
         self.view_records_button.setProperty("actionRole", "primary")
+        # The records already have a dedicated tab in the selected-job detail.
+        # Keep the object for compatibility with existing automation, but avoid
+        # presenting a second route to the same content.
+        self.view_records_button.hide()
         self.export_button = QPushButton("导出 CSV")
         self.interruption_reason_input = QLineEdit("人工中断")
-        self.interrupt_button = QPushButton("中断运行")
+        self.interrupt_button = QPushButton("中断作业")
         self.interrupt_button.setProperty("actionRole", "danger")
         self.refresh_button = QPushButton("刷新")
         toolbar = QHBoxLayout()
@@ -158,37 +166,36 @@ class ProductionRunManagementWidget(QWidget):
         run_list_card = content_card()
         run_list_layout = QVBoxLayout(run_list_card)
         run_list_heading = QHBoxLayout()
-        run_list_heading.addWidget(section_heading("运行列表", "选择后查看右侧详情"), 1)
+        run_list_heading.addWidget(section_heading("作业列表", "选择后查看右侧详情"), 1)
         self.run_count_chip = QLabel("0 个")
         self.run_count_chip.setProperty("metricChip", True)
         self.run_count_chip.setProperty("metricTone", "primary")
         run_list_heading.addWidget(self.run_count_chip)
         run_list_layout.addLayout(run_list_heading)
-        self.run_table = QTableWidget(0, 6)
+        self.run_table = QTableWidget(0, 5)
         self.run_table.setHorizontalHeaderLabels(
-            ("运行号", "产品 / 版本", "操作员", "状态", "进度", "开始时间")
+            ("作业号", "产品 / 配置版本", "状态", "进度", "开始时间")
         )
         prepare_table(self.run_table)
         self.run_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.run_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.run_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.run_table.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self.run_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         set_column_widths(
             self.run_table,
-            (160, 140, 75, 65, 55, 115),
+            (132, 210, 75, 65, 112),
         )
+        set_column_minimum_widths(self.run_table, (132, 110, 65, 48, 100))
         set_responsive_columns(
             self.run_table,
             stretch=(1,),
-            compact=(2, 3, 4),
+            compact=(2, 3),
         )
         enable_table_layout(
             self.run_table,
             "runs/list",
             self._layout_store,
-            narrow_hidden=(2, 4),
+            narrow_hidden=(3,),
             narrow_threshold=620,
         )
         run_list_layout.addWidget(self.run_table, 1)
@@ -199,7 +206,7 @@ class ProductionRunManagementWidget(QWidget):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(8, 8, 8, 8)
         right_layout.setSpacing(5)
-        self.run_summary_title = QLabel("请选择生产运行")
+        self.run_summary_title = QLabel("请选择作业")
         self.run_summary_title.setObjectName("detailTitle")
         self.run_summary_title.setWordWrap(False)
         self.run_summary_title.setSizePolicy(
@@ -223,7 +230,7 @@ class ProductionRunManagementWidget(QWidget):
         self.run_progress_chip.setStyleSheet("background: #eff8ff; color: #175cd3;")
         self.run_ng_chip.setStyleSheet("background: #fef3f2; color: #d92d20;")
         right_layout.addLayout(chips)
-        self.snapshot_label = QLabel("请选择生产运行")
+        self.snapshot_label = QLabel("请选择作业")
         self.snapshot_label.setWordWrap(True)
         self.snapshot_label.setSizePolicy(
             QSizePolicy.Policy.Ignored,
@@ -232,12 +239,8 @@ class ProductionRunManagementWidget(QWidget):
         self.snapshot_scroll = QScrollArea()
         self.snapshot_scroll.setWidgetResizable(True)
         self.snapshot_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.snapshot_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self.snapshot_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
+        self.snapshot_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.snapshot_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.snapshot_scroll.setMinimumHeight(58)
         self.snapshot_scroll.setMaximumHeight(82)
         self.snapshot_scroll.setWidget(self.snapshot_label)
@@ -254,9 +257,7 @@ class ProductionRunManagementWidget(QWidget):
         )
         prepare_table(self.station_table)
         self.station_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.station_table.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self.station_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         set_column_widths(self.station_table, (65, 50, 110, 55, 95))
         set_responsive_columns(
             self.station_table,
@@ -316,6 +317,7 @@ class ProductionRunManagementWidget(QWidget):
             narrow_threshold=1500,
         )
         layout.addWidget(splitter, 1)
+        self._details_stacked = False
 
         self.status_label = QLabel("就绪")
         set_feedback(self.status_label, "neutral", "就绪")
@@ -335,6 +337,8 @@ class ProductionRunManagementWidget(QWidget):
 
     @Slot()
     def refresh(self) -> None:
+        selected = self._selected()
+        selected_run_id = None if selected is None else selected.run_id
         started_from, started_to = self.date_range.values()
         self._runs = self._repository.search_runs(
             self.query_input.text(),
@@ -346,42 +350,53 @@ class ProductionRunManagementWidget(QWidget):
         self.run_table.setRowCount(len(self._runs))
         self.run_count_chip.setText(f"{len(self._runs)} 个")
         for row, run in enumerate(self._runs):
+            started_at = display_datetime(run.started_at)
             values = (
-                run.run_id,
+                run.job_number,
                 f"{run.configuration.product_code}/{run.configuration.version}",
-                run.operator,
                 RUN_STATUS_TEXT[run.status],
                 f"{run.completed_stations}/{run.total_stations}",
-                display_datetime(run.started_at),
+                started_at[5:],
             )
             for column, value in enumerate(values):
                 self.run_table.setItem(row, column, readable_item(value))
+            run_number_item = self.run_table.item(row, 0)
+            if run_number_item is not None:
+                run_number_item.setToolTip(f"作业号：{run.job_number}\n内部编号：{run.run_id}")
+            started_at_item = self.run_table.item(row, 4)
+            if started_at_item is not None:
+                started_at_item.setToolTip(f"开始时间：{started_at}")
         if self._runs:
-            self.run_table.selectRow(0)
+            selected_row = next(
+                (index for index, run in enumerate(self._runs) if run.run_id == selected_run_id),
+                0,
+            )
+            self.run_table.selectRow(selected_row)
             # Qt does not emit itemSelectionChanged when row 0 was already selected
             # before the refresh.  Render explicitly so the snapshot and actions
-            # always describe the newly loaded first row.
+            # always describe the newly loaded selected row.
             self._render_selected()
-            self._show_success(
-                f"找到 {len(self._runs)} 个运行 · 更新于 {self._clock():%H:%M}"
-            )
+            self._show_success(f"找到 {len(self._runs)} 个作业 · 更新于 {self._clock():%H:%M}")
         else:
-            self.run_summary_title.setText("没有匹配的生产运行")
+            self.run_summary_title.setText("没有匹配的作业")
             self.run_status_chip.setText("状态 -")
             self.run_progress_chip.setText("0 / 0")
             self.run_ng_chip.setText("NG 0")
-            self.snapshot_label.setText("没有匹配的生产运行")
+            self.snapshot_label.setText("没有匹配的作业")
             self.station_table.setRowCount(0)
             self.attempt_table.setRowCount(0)
             self.attempt_summary_label.setText("扫码记录：0 条")
             self.resume_button.setEnabled(False)
             self.interrupt_button.setEnabled(False)
+            self.resume_button.hide()
+            self.interruption_reason_input.hide()
+            self.interrupt_button.hide()
             self.view_records_button.setEnabled(False)
             self.export_button.setEnabled(False)
             set_feedback(
                 self.status_label,
                 "neutral",
-                f"没有匹配的生产运行 · 更新于 {self._clock():%H:%M}",
+                f"没有匹配的作业 · 更新于 {self._clock():%H:%M}",
             )
 
     @Slot()
@@ -389,7 +404,7 @@ class ProductionRunManagementWidget(QWidget):
         run = self._selected()
         if run is None:
             return
-        self.run_summary_title.setText(run.run_id)
+        self.run_summary_title.setText(run.job_number)
         status_text = RUN_STATUS_TEXT[run.status]
         status_style = {
             RunStatus.RUNNING: "background: #ecfdf3; color: #067647;",
@@ -398,12 +413,9 @@ class ProductionRunManagementWidget(QWidget):
         }[run.status]
         self.run_status_chip.setText(status_text)
         self.run_status_chip.setStyleSheet(status_style)
-        self.run_progress_chip.setText(
-            f"{run.completed_stations} / {run.total_stations}"
-        )
+        self.run_progress_chip.setText(f"{run.completed_stations} / {run.total_stations}")
         snapshot = (
-            f"配置：{run.configuration.product_code}/{run.configuration.version} | "
-            f"BOM：{run.configuration.bom_version_id or '-'}\n"
+            f"配置：{run.configuration.product_code}/{run.configuration.version}\n"
             f"操作员：{run.operator} | 状态：{status_text}\n"
             f"开始：{display_datetime(run.started_at)} | "
             f"结束/中断：{display_datetime(run.completed_at or run.interrupted_at) or '-'}\n"
@@ -449,41 +461,59 @@ class ProductionRunManagementWidget(QWidget):
         self.run_ng_chip.setText(f"NG {ng_count}")
         self.resume_button.setEnabled(run.status is RunStatus.INTERRUPTED)
         self.interrupt_button.setEnabled(run.status is RunStatus.RUNNING)
+        self.resume_button.setVisible(run.status is RunStatus.INTERRUPTED)
+        running = run.status is RunStatus.RUNNING
+        self.interruption_reason_input.setVisible(running)
+        self.interrupt_button.setVisible(running)
         self.view_records_button.setEnabled(True)
         self.export_button.setEnabled(self._exporter is not None and bool(attempts))
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        # At common 1366-wide laptop windows the reduced five-column list and
+        # detail pane still fit side by side and preserve useful vertical table
+        # space.  Stack only in genuinely narrow ordinary windows.
+        stacked = event.size().width() < 1050
+        if stacked == self._details_stacked:
+            return
+        self._details_stacked = stacked
+        self.splitter.setOrientation(
+            Qt.Orientation.Vertical if stacked else Qt.Orientation.Horizontal
+        )
+        self.splitter.setSizes([1, 1] if stacked else [2, 3])
 
     @Slot()
     def _resume(self) -> None:
         run = self._selected()
         if run is None:
-            self._show_error("请先选择生产运行")
+            self._show_error("请先选择作业")
             return
         if run.status is not RunStatus.INTERRUPTED:
-            self._show_error("只有已中断运行可以恢复")
+            self._show_error("只有已中断作业可以恢复")
             return
         self.resume_requested.emit(run.run_id)
-        self._show_success(f"已请求恢复 {run.run_id}")
+        self._show_success(f"已请求恢复作业 {run.job_number}")
 
     @Slot()
     def _interrupt(self) -> None:
         run = self._selected()
         if run is None:
-            self._show_error("请先选择生产运行")
+            self._show_error("请先选择作业")
             return
         if run.status is not RunStatus.RUNNING:
-            self._show_error("只有运行中记录可以中断")
+            self._show_error("只有进行中的作业可以中断")
             return
         reason = self.interruption_reason_input.text().strip()
         if not reason:
             self._show_error("中断原因不能为空")
             return
         self.interrupt_requested.emit(run.run_id, reason)
-        self._show_success(f"已请求中断 {run.run_id}")
+        self._show_success(f"已请求中断作业 {run.job_number}")
 
     @Slot()
     def _view_records(self) -> None:
         if self._selected() is None:
-            self._show_error("请先选择生产运行")
+            self._show_error("请先选择作业")
             return
         self.detail_tabs.setCurrentIndex(1)
 
@@ -491,7 +521,7 @@ class ProductionRunManagementWidget(QWidget):
     def _export(self) -> None:
         run = self._selected()
         if run is None:
-            self._show_error("请先选择生产运行")
+            self._show_error("请先选择作业")
             return
         if self._exporter is None:
             self._show_error("当前未配置导出功能")
@@ -499,7 +529,7 @@ class ProductionRunManagementWidget(QWidget):
         path_text, _ = QFileDialog.getSaveFileName(
             self,
             "导出扫码记录",
-            f"{run.run_id}.csv",
+            f"{run.job_number}.csv",
             "CSV 文件 (*.csv)",
         )
         if not path_text:
@@ -510,7 +540,7 @@ class ProductionRunManagementWidget(QWidget):
             self._show_error(str(error))
             self._announcer.announce(VoicePrompt.EXPORT_FAILED)
             return
-        self._show_success(f"已导出 {run.run_id} 到 {path_text}")
+        self._show_success(f"已导出作业 {run.job_number} 到 {path_text}")
         self._announcer.announce(VoicePrompt.RECORDS_EXPORTED)
 
     def _selected(self) -> ProductionRun | None:

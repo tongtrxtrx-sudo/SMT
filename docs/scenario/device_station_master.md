@@ -2,14 +2,15 @@
 
 - Given: An administrator opens system settings
 - When: The administrator creates devices and configures stations manually or in bulk
-- Then: Device codes are globally unique and station codes are unique within each device
+- Then: Device codes and station codes are globally unique
 
 ## Test Steps
 
 - Case 1 (happy path): Create `SMT-01`, then bulk-create stations `F-01` through `F-60`.
 - Case 2 (duplicate device): Reject a second device with code `SMT-01`.
-- Case 3 (duplicate station): Reject a second `F-01` under `SMT-01`.
-- Case 4 (same station on another device): Allow `F-01` under `SMT-02`.
+- Case 3 (duplicate station): Reject a second `F-01`, including when it is assigned to `SMT-02`.
+- Case 4 (bulk atomicity): Reject a bulk range if any generated station code already exists under
+  any device, without creating part of the range.
 - Case 5 (referenced station): A station used by a product configuration can be disabled but cannot be deleted.
 
 ## Status

@@ -24,12 +24,13 @@ class SqliteMasterDataTests(unittest.TestCase):
 
     def test_rejects_duplicate_codes(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")
+        self.repository.add_device("SMT-02", "Machine 2", "Line A")
         self.repository.add_station("SMT-01", "F-01")
 
         with self.assertRaises(DuplicateCodeError):
             self.repository.add_device("SMT-01", "Duplicate", "Line B")
         with self.assertRaises(DuplicateCodeError):
-            self.repository.add_station("SMT-01", "F-01")
+            self.repository.add_station("SMT-02", "F-01")
 
     def test_bulk_station_creation_is_atomic(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")

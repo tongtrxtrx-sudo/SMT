@@ -61,6 +61,19 @@ class FakeSeparateImportWorkflow:
         self.calls.append(("stations", station_path, version, station_sheet))
         return sample_result()
 
+    def import_configuration(
+        self,
+        station_path: Path,
+        *,
+        product_code: str,
+        version: str,
+        station_sheet: str,
+    ) -> ImportResult:
+        self.calls.append(
+            ("configuration", station_path, product_code, version, station_sheet)
+        )
+        return ImportResult(None, sample_result().configuration)
+
 
 class SeparateImportServiceTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -186,44 +199,35 @@ class SeparateImportWidgetTests(unittest.TestCase):
         else:
             raise RuntimeError("A non-GUI Qt application already exists")
 
-    def test_uses_independent_bom_and_station_actions(self) -> None:
+    def test_widget_uses_single_direct_configuration_action(self) -> None:
         workflow = FakeSeparateImportWorkflow()
         widget = ConfigurationImportWidget(workflow)
         self.addCleanup(widget.close)
-
-        widget.bom_path_input.setText(" C:/imports/bom.xlsx ")
-        widget.bom_import_button.click()
-
-        self.assertEqual([("bom", Path("C:/imports/bom.xlsx"))], workflow.calls)
-        self.assertIn("501000087", widget.product_label.text())
-        self.assertEqual(0, widget.assignment_table.rowCount())
-
+        widget.product_code_input.setText(" 501000087 ")
         widget.station_path_input.setText(" C:/imports/stations.xlsx ")
         widget.station_sheet_input.setText(" Worksheet ")
         widget.version_input.setText(" V1 ")
         widget.station_import_button.click()
 
         self.assertEqual(
-            ("stations", Path("C:/imports/stations.xlsx"), "V1", "Worksheet"),
+            (
+                "configuration",
+                Path("C:/imports/stations.xlsx"),
+                "501000087",
+                "V1",
+                "Worksheet",
+            ),
             workflow.calls[-1],
         )
         self.assertEqual(1, widget.assignment_table.rowCount())
         self.assertEqual("success", widget.status_label.property("feedbackState"))
 
-    def test_station_action_does_not_require_bom_path_field(self) -> None:
+    def test_widget_has_no_bom_import_controls(self) -> None:
         workflow = FakeSeparateImportWorkflow()
         widget = ConfigurationImportWidget(workflow)
         self.addCleanup(widget.close)
-        widget.station_path_input.setText("C:/imports/stations.xlsx")
-        widget.station_sheet_input.setText("Worksheet")
-        widget.version_input.setText("V1")
-
-        widget.station_import_button.click()
-
-        self.assertEqual(
-            [("stations", Path("C:/imports/stations.xlsx"), "V1", "Worksheet")],
-            workflow.calls,
-        )
+        self.assertFalse(hasattr(widget, "bom_path_input"))
+        self.assertFalse(hasattr(widget, "bom_import_button"))
 
 
 if __name__ == "__main__":

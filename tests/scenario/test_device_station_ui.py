@@ -141,8 +141,11 @@ class DeviceStationWidgetTests(unittest.TestCase):
     def test_device_selection_refreshes_station_context(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")
         self.repository.add_device("SMT-02", "Machine 2", "Line A")
+        self.repository.add_station("SMT-01", "F-01")
         self.repository.add_station("SMT-02", "R-01")
         widget = self.make_widget()
+
+        self.assertEqual("F-01", widget.station_code_input.text())
 
         widget.device_table.selectRow(1)
         self.app.processEvents()
@@ -151,6 +154,7 @@ class DeviceStationWidgetTests(unittest.TestCase):
         assert station_code is not None
         self.assertIn("SMT-02", widget.selected_device_label.text())
         self.assertEqual("R-01", station_code.text())
+        self.assertEqual("R-01", widget.station_code_input.text())
 
     def test_displays_station_codes_in_natural_numeric_order(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")

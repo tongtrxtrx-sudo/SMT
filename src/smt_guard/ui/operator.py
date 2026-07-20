@@ -43,7 +43,7 @@ class OperatorSessionWidget(QWidget):
         self.current_label.setObjectName("currentOperator")
         self.status_label = QLabel("未录入操作员" if not session.operator else "操作员已确认")
         self.switch_button = QPushButton("切换")
-        self.switch_button.setToolTip("切换操作员会中断当前未完成的生产运行")
+        self.switch_button.setToolTip("切换操作员会中断当前未完成的扫码作业")
         layout.addWidget(self.prompt_label)
         self.current_label.setWordWrap(True)
         layout.addWidget(self.operator_input)

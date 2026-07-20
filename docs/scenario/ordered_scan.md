@@ -2,16 +2,18 @@
 
 - Given: An active product configuration has been selected
 - When: Scanner text terminated by Enter is received
-- Then: The system accepts device, station, and reel material codes only in the required order
+- Then: The system accepts globally unique station and reel material codes in the required order,
+  and resolves the owning device automatically
 
 ## Test Steps
 
-- Case 1 (happy path): Accept `SMT-01`, then `F-01`, then a material code.
-- Case 2 (material first): Reject a material code while waiting for a device code.
-- Case 3 (station first): Reject a station code before a device has been selected.
-- Case 4 (unknown device): Reject a device not used by the active product configuration.
-- Case 5 (wrong-device station): Reject a station that does not belong to the selected device.
-- Case 6 (next cycle): After verification, retain the current device and return to the station step for the next feeder.
+- Case 1 (happy path): Accept `F-01`, resolve its device, then accept its material code.
+- Case 2 (material first): Reject a material code while waiting for a station code.
+- Case 3 (device scan removed): Reject a device code while waiting for a station code.
+- Case 4 (cross-device resolution): Resolve each globally unique station to its owning device.
+- Case 5 (NG retry): Retain the current device and station until the material is correct.
+- Case 6 (invariant guard): Reject an ambiguous in-memory configuration containing one station
+  code under multiple devices.
 
 ## Status
 

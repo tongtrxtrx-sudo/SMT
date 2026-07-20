@@ -7,9 +7,10 @@
 ## Test Steps
 
 - Case 1 (configuration): Load configurations and start a deterministic run.
-- Case 2 (current task): Use a large blue/orange/green prompt for device, station, and material.
+- Case 2 (current task): Use a large orange/green prompt for station and material.
 - Case 3 (scanner focus): Auto-submit on Enter, restore focus, and show ready/unfocused status.
-- Case 4 (OK flow): Process device-station-material and show a large green result panel.
+- Case 4 (OK flow): Process station-material, resolve the device automatically, and show a large
+  green result panel.
 - Case 5 (NG flow): Show a large red result panel, expected/scanned material, and retain the step.
 - Case 6 (history): Give recent attempts the full page width and show them by default at
   full-screen width; keep them collapsed in a medium window until the operator expands them.

@@ -24,6 +24,18 @@ class ImportValidationTests(unittest.TestCase):
 
         self.assertEqual("10002345", configuration.required_material("SMT-01", "F-01"))
 
+    def test_accepts_station_and_material_without_device_or_bom_membership(self) -> None:
+        configuration = self.builder.build(
+            "501000087",
+            "V1",
+            {},
+            [{"站位编码": "F-01", "物料编码": "ANY-MATERIAL"}],
+        )
+
+        self.assertEqual(
+            "ANY-MATERIAL", configuration.required_material("SMT-01", "F-01")
+        )
+
     def test_rejects_missing_required_column(self) -> None:
         with self.assertRaises(ImportValidationError) as caught:
             self.builder.build(
@@ -35,7 +47,7 @@ class ImportValidationTests(unittest.TestCase):
 
         self.assertIn("物料编码", str(caught.exception))
 
-    def test_rejects_unknown_material_with_source_row(self) -> None:
+    def test_rejects_unknown_station_with_source_row(self) -> None:
         with self.assertRaises(ImportValidationError) as caught:
             self.builder.build(
                 "501000087",
@@ -44,7 +56,7 @@ class ImportValidationTests(unittest.TestCase):
                 [
                     {
                         "设备编码": "SMT-01",
-                        "站位编码": "F-01",
+                        "站位编码": "F-99",
                         "物料编码": "99999999",
                         "_row_number": 7,
                     }
@@ -52,21 +64,18 @@ class ImportValidationTests(unittest.TestCase):
             )
 
         self.assertIn("7", str(caught.exception))
-        self.assertIn("99999999", str(caught.exception))
+        self.assertIn("F-99", str(caught.exception))
 
-    def test_rejects_unknown_or_disabled_device(self) -> None:
-        for code in ("SMT-99", "SMT-02"):
-            if code == "SMT-02":
-                self.master.add_device(code, "Disabled", "Line B")
-                self.master.disable_device(code)
+    def test_rejects_mismatched_legacy_device_column(self) -> None:
+        with self.assertRaises(ImportValidationError) as caught:
+            self.builder.build(
+                "501000087",
+                "V1",
+                self.materials,
+                [{"设备编码": "SMT-99", "站位编码": "F-01", "物料编码": "10002345"}],
+            )
 
-            with self.subTest(code=code), self.assertRaises(ImportValidationError):
-                self.builder.build(
-                    "501000087",
-                    "V1",
-                    self.materials,
-                    [{"设备编码": code, "站位编码": "F-01", "物料编码": "10002345"}],
-                )
+        self.assertIn("belongs to device SMT-01", str(caught.exception))
 
     def test_rejects_unknown_station_under_device(self) -> None:
         with self.assertRaises(ImportValidationError):

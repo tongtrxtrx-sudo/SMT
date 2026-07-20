@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication, QBoxLayout
 
 from smt_guard.feedback import FeedbackTone, VoicePrompt
 from smt_guard.records import InMemoryAttemptRepository
-from smt_guard.scan import ProductConfiguration
+from smt_guard.scan import ProductConfiguration, ScanStep
 from smt_guard.ui.scanning import ScanWidget
 
 
@@ -80,18 +80,22 @@ class ScanWidgetTests(unittest.TestCase):
 
         self.assertIn("501000087 / V1", widget.product_summary_label.text())
         self.assertFalse(widget.selection_card.isHidden())
+        self.assertEqual((0, 1), (widget.progress_bar.minimum(), widget.progress_bar.maximum()))
+        self.assertEqual(0, widget.progress_bar.value())
+        self.assertEqual("0 / 0", widget.progress_count_label.text())
+        self.assertGreater(widget.hero_card.maximumHeight(), widget.hero_card.minimumHeight())
 
         widget.start_button.click()
 
         self.assertEqual(1, widget.configuration_combo.count())
         self.assertIn("RUN-1", widget.run_label.text())
         self.assertTrue(widget.scan_input.isEnabled())
-        self.assertIn("设备", widget.feedback_label.text())
-        self.assertIn("#eff8ff", widget.feedback_label.styleSheet())
-        self.assertFalse(widget.attempt_table.isVisible())
+        self.assertIn("站位", widget.feedback_label.text())
+        self.assertIn("#fffaeb", widget.feedback_label.styleSheet())
+        self.assertFalse(widget.attempt_table.isHidden())
         self.assertTrue(widget.selection_card.isHidden())
         self.assertEqual("0 / 1", widget.progress_count_label.text())
-        self.assertEqual([VoicePrompt.SCAN_DEVICE], self.announcements.prompts)
+        self.assertEqual([VoicePrompt.SCAN_STATION], self.announcements.prompts)
 
     def test_configuration_selector_supports_typed_contains_search(self) -> None:
         second = ProductConfiguration(
@@ -130,15 +134,22 @@ class ScanWidgetTests(unittest.TestCase):
     def test_focus_status_and_history_keep_scanner_as_primary_input(self) -> None:
         widget = self.make_widget([self.configuration])
         widget.show()
+        widget.resize(1440, 850)
+        self.app.processEvents()
+
+        self.assertEqual("收起", widget.history_button.text())
+        self.assertTrue(widget.attempt_table.isColumnHidden(1))
+        self.assertTrue(widget.attempt_table.isColumnHidden(6))
+
         widget.start_button.click()
         self.app.processEvents()
 
         self.assertTrue(widget.scan_input.hasFocus())
         self.assertIn("已就绪", widget.scanner_status_button.text())
         widget.history_button.click()
-        self.assertTrue(widget.attempt_table.isVisible())
-        widget.history_button.click()
         self.assertFalse(widget.attempt_table.isVisible())
+        widget.history_button.click()
+        self.assertTrue(widget.attempt_table.isVisible())
 
         widget.history_button.setFocus()
         self.app.processEvents()
@@ -152,11 +163,11 @@ class ScanWidgetTests(unittest.TestCase):
         widget = self.make_widget([self.configuration])
         widget.start_button.click()
 
-        self.scan(widget, "SMT-01")
-        self.assertIn("站位", widget.feedback_label.text())
-        self.assertIn("#fffaeb", widget.feedback_label.styleSheet())
         self.scan(widget, "F-01")
         self.assertIn("物料", widget.feedback_label.text())
+        self.assertIn("当前站位 F-01", widget.feedback_label.text())
+        self.assertIn("所属设备 SMT-01", widget.feedback_label.text())
+        self.assertTrue(widget.rescan_station_button.isVisibleTo(widget))
         self.assertFalse(widget.expected_label.isHidden())
         self.assertIn("#ecfdf3", widget.feedback_label.styleSheet())
         self.scan(widget, "013000081")
@@ -169,7 +180,6 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertEqual([FeedbackTone.OK], self.audio.tones)
         self.assertEqual(
             [
-                VoicePrompt.SCAN_DEVICE,
                 VoicePrompt.SCAN_STATION,
                 VoicePrompt.SCAN_MATERIAL,
                 VoicePrompt.RUN_COMPLETED,
@@ -181,7 +191,6 @@ class ScanWidgetTests(unittest.TestCase):
         widget = self.make_widget([self.configuration])
         widget.start_button.click()
 
-        self.scan(widget, "SMT-01")
         self.scan(widget, "F-01")
         self.scan(widget, "013000081")
 
@@ -201,7 +210,6 @@ class ScanWidgetTests(unittest.TestCase):
         widget = self.make_widget([self.configuration])
         widget.show()
         widget.start_button.click()
-        self.scan(widget, "SMT-01")
         self.scan(widget, "F-01")
 
         self.scan(widget, "999999999")
@@ -217,7 +225,6 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertIn("已就绪", widget.scanner_status_button.text())
         self.assertEqual(
             [
-                VoicePrompt.SCAN_DEVICE,
                 VoicePrompt.SCAN_STATION,
                 VoicePrompt.SCAN_MATERIAL,
                 VoicePrompt.MATERIAL_NG,
@@ -236,14 +243,14 @@ class ScanWidgetTests(unittest.TestCase):
     def test_invalid_scan_and_run_replacement_prioritize_latest_prompt(self) -> None:
         widget = self.make_widget([self.configuration])
         widget.start_button.click()
-        self.scan(widget, "WRONG-DEVICE")
+        self.scan(widget, "WRONG-STATION")
         widget.start_button.click()
 
         self.assertEqual(
             [
-                VoicePrompt.SCAN_DEVICE,
+                VoicePrompt.SCAN_STATION,
                 VoicePrompt.SCAN_REJECTED,
-                VoicePrompt.SCAN_DEVICE,
+                VoicePrompt.SCAN_STATION,
             ],
             self.announcements.prompts,
         )
@@ -259,13 +266,11 @@ class ScanWidgetTests(unittest.TestCase):
         )
         widget = self.make_widget([configuration])
         widget.start_button.click()
-        self.scan(widget, "SMT-01")
         self.scan(widget, "F-01")
         self.scan(widget, "013000081")
 
         self.assertEqual(
             [
-                VoicePrompt.SCAN_DEVICE,
                 VoicePrompt.SCAN_STATION,
                 VoicePrompt.SCAN_MATERIAL,
                 VoicePrompt.SCAN_STATION,
@@ -284,7 +289,6 @@ class ScanWidgetTests(unittest.TestCase):
         )
         self.addCleanup(widget.close)
         widget.start_button.click()
-        self.scan(widget, "SMT-01")
         self.scan(widget, "F-01")
         self.scan(widget, "013000081")
 
@@ -292,7 +296,7 @@ class ScanWidgetTests(unittest.TestCase):
         self.assertIsNotNone(time_item)
         if time_item is None:
             self.fail("Missing attempt timestamp cell")
-        self.assertEqual("2026-07-11 12:34", time_item.text())
+        self.assertEqual("12:34:56", time_item.text())
         self.assertEqual(56, self.repository.list_for_run("RUN-1")[0].timestamp.second)
 
     def test_reflows_primary_task_for_full_screen_and_medium_windows(self) -> None:
@@ -309,8 +313,10 @@ class ScanWidgetTests(unittest.TestCase):
             widget.hero_column.geometry().bottom(),
             widget.overview_column.geometry().top(),
         )
-        self.assertGreaterEqual(widget.hero_card.height(), 320)
-        self.assertLessEqual(widget.hero_card.height(), 400)
+        # The scan prompt stays compact even on a large display so recent
+        # attempts receive the remaining vertical space.
+        self.assertGreaterEqual(widget.hero_card.height(), 220)
+        self.assertLessEqual(widget.hero_card.height(), 280)
         self.assertGreaterEqual(widget.scan_input.height(), 56)
         self.assertLessEqual(widget.progress_card.height(), 72)
         self.assertGreater(
@@ -327,10 +333,22 @@ class ScanWidgetTests(unittest.TestCase):
             QBoxLayout.Direction.TopToBottom,
             widget.workflow_layout.direction(),
         )
-        self.assertLessEqual(widget.hero_card.height(), 290)
+        self.assertLessEqual(widget.hero_card.height(), 240)
         self.assertLessEqual(widget.progress_card.height(), 72)
-        self.assertFalse(widget.history_button.isChecked())
-        self.assertFalse(widget.attempt_table.isVisible())
+        self.assertTrue(widget.history_button.isChecked())
+        self.assertTrue(widget.attempt_table.isVisible())
+
+    def test_operator_can_explicitly_rescan_station_before_material(self) -> None:
+        widget = self.make_widget([self.configuration])
+        widget.show()
+        widget.start_button.click()
+        self.scan(widget, "F-01")
+
+        widget.rescan_station_button.click()
+
+        self.assertIn("站位", widget.feedback_label.text())
+        self.assertFalse(widget.rescan_station_button.isVisible())
+        self.assertEqual(ScanStep.STATION, widget._run.current_step)  # type: ignore[union-attr]
 
 
 if __name__ == "__main__":

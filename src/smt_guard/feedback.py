@@ -32,7 +32,7 @@ class VoicePrompt(Enum):
     CONFIGURATION_DISABLED = "产品配置已停用"
     CONFIGURATION_ARCHIVED = "产品配置已归档"
     LIFECYCLE_FAILED = "状态操作失败，请查看屏幕提示"
-    RUN_STARTED = "生产运行已开始，请扫描设备码"
+    RUN_STARTED = "生产运行已开始，请扫描站位码"
     RUN_REPLACED = "原生产运行已中断，新生产运行已开始"
     RUN_INTERRUPTED = "生产运行已中断"
     RUN_RESUMED = "生产运行已恢复，请继续扫码"
@@ -40,7 +40,6 @@ class VoicePrompt(Enum):
     MATERIAL_OK = "对料正确"
     MATERIAL_NG = "对料错误，请检查物料"
     RUN_COMPLETED = "全部对料完成"
-    SCAN_DEVICE = "请扫码设备码"
     SCAN_STATION = "请扫码站位码"
     SCAN_MATERIAL = "请扫码物料码"
     RECORDS_EXPORTED = "扫码记录导出成功"
@@ -55,7 +54,6 @@ class AnnouncementSink(Protocol):
 
 
 SCAN_STEP_PROMPTS = {
-    ScanStep.DEVICE: VoicePrompt.SCAN_DEVICE,
     ScanStep.STATION: VoicePrompt.SCAN_STATION,
     ScanStep.MATERIAL: VoicePrompt.SCAN_MATERIAL,
 }
@@ -100,7 +98,6 @@ class FeedbackController:
     """Build deterministic feedback without depending on GUI widgets."""
 
     WAITING_MESSAGES = {
-        ScanStep.DEVICE: "请扫描设备码",
         ScanStep.STATION: "请扫描站位码",
         ScanStep.MATERIAL: "请扫描物料码",
     }

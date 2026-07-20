@@ -17,9 +17,9 @@ def create_template(output: Path) -> None:
     worksheet.title = "Worksheet"
     worksheet.sheet_properties.tabColor = "16A34A"
 
-    headers = ("设备编码", "站位编码", "物料编码")
+    headers = ("站位编码", "物料编码")
     worksheet.append(headers)
-    worksheet.append(("SMT-01", "F-01", "013000081"))
+    worksheet.append(("F-01", "013000081"))
 
     dark_green = PatternFill("solid", fgColor="166534")
     pale_green = PatternFill("solid", fgColor="F0FDF4")
@@ -48,11 +48,10 @@ def create_template(output: Path) -> None:
 
     worksheet.row_dimensions[1].height = 28
     worksheet.row_dimensions[2].height = 24
-    worksheet.column_dimensions["A"].width = 18
-    worksheet.column_dimensions["B"].width = 18
-    worksheet.column_dimensions["C"].width = 22
+    worksheet.column_dimensions["A"].width = 20
+    worksheet.column_dimensions["B"].width = 24
     worksheet.freeze_panes = "A2"
-    worksheet.auto_filter.ref = "A1:C2"
+    worksheet.auto_filter.ref = "A1:B2"
     worksheet.print_title_rows = "1:1"
     worksheet.page_setup.orientation = "landscape"
     worksheet.page_setup.fitToWidth = 1
@@ -64,16 +63,14 @@ def create_template(output: Path) -> None:
     instructions.merge_cells("A1:D1")
     instructions["A1"] = "SMT 站位表导入模板 - 填写说明"
     instructions["A1"].fill = dark_green
-    instructions["A1"].font = Font(
-        name="Microsoft YaHei", color="FFFFFF", bold=True, size=16
-    )
+    instructions["A1"].font = Font(name="Microsoft YaHei", color="FFFFFF", bold=True, size=16)
     instructions["A1"].alignment = Alignment(horizontal="center", vertical="center")
     instructions.row_dimensions[1].height = 34
     notes = (
         ("字段", "是否必填", "示例", "说明"),
-        ("设备编码", "是", "SMT-01", "必须先在软件的“设备与站位”页面创建并启用"),
-        ("站位编码", "是", "F-01", "必须属于对应设备并处于启用状态"),
-        ("物料编码", "是", "013000081", "按文本填写，必须保留前导零并存在于已导入 BOM"),
+        ("站位编码", "是", "F-01", "必须全局唯一，并已在“设备与站位”页面创建和启用"),
+        ("物料编码", "是", "013000081", "按文本填写并保留前导零；不要求预先导入 BOM"),
+        ("设备编码", "否", "SMT-01", "仅兼容旧表；如填写，必须与该站位的所属设备一致"),
     )
     for row in notes:
         instructions.append(row)

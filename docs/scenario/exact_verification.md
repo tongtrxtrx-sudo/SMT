@@ -1,6 +1,7 @@
 # Scenario: Exact material verification
 
-- Given: A device and station have been selected and the station requires a known material code
+- Given: A globally unique station has been scanned, its device resolved, and it requires a known
+  material code
 - When: The operator scans a reel material code
 - Then: The system returns OK only when the normalized scanned code exactly equals the required material code
 

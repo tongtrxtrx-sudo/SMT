@@ -120,10 +120,11 @@ class _TableLayoutController(QObject):
         self._store = store
         self._narrow_hidden = frozenset(narrow_hidden)
         self._narrow_threshold = narrow_threshold
-        self._base_hidden = tuple(
+        self._base_hidden = [
             table.isColumnHidden(column) for column in range(table.columnCount())
-        )
+        ]
         self._default_widths: list[int] = []
+        self._minimum_widths: list[int] = []
         self._stretch_columns: frozenset[int] = frozenset()
         self._narrow = False
         self._applying_layout = False
@@ -171,6 +172,12 @@ class _TableLayoutController(QObject):
                 for column in range(self._table.columnCount())
             ]
         )
+        configured_minimums = getattr(self._table, "_ui_minimum_column_widths", ())
+        self._minimum_widths = (
+            list(configured_minimums)
+            if len(configured_minimums) == self._table.columnCount()
+            else [header.minimumSectionSize()] * self._table.columnCount()
+        )
         for column in range(self._table.columnCount()):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
         reference_extent = (
@@ -178,16 +185,22 @@ class _TableLayoutController(QObject):
         )
         restored = self._store.restore(self._key, header) if self._store else False
         self._apply_narrow_visibility(force=True)
-        if restored and reference_extent is not None and _extent_changed(
-            reference_extent, header.width()
-        ):
-            scale = header.width() / reference_extent
+        if restored:
+            scale = (
+                header.width() / reference_extent
+                if reference_extent is not None
+                and _extent_changed(reference_extent, header.width())
+                else 1.0
+            )
             restored_widths = [
                 max(round(header.sectionSize(column) * scale), header.minimumSectionSize())
                 for column in range(self._table.columnCount())
             ]
+            # A saved layout can contain widths whose total is smaller than the
+            # current viewport (for example after columns were hidden). Always
+            # fit the restored widths so visible columns do not leave a blank band.
             self._fit_widths(restored_widths)
-        elif not restored or reference_extent is None:
+        else:
             self._fit_default_widths()
         header.sectionMoved.connect(self._queue_save)
         header.sectionResized.connect(self._queue_save)
@@ -221,6 +234,15 @@ class _TableLayoutController(QObject):
                 self._table.setColumnHidden(column, False)
             self._table.setColumnHidden(column, hidden)
 
+    def set_column_hidden(self, column: int, hidden: bool) -> None:
+        """Update a business-controlled column without losing it on resize/restore."""
+        if not 0 <= column < len(self._base_hidden):
+            raise IndexError(f"table column out of range: {column}")
+        self._base_hidden[column] = hidden
+        self._apply_narrow_visibility(force=hidden)
+        if self._initialized:
+            self._fit_default_widths()
+
     def _fit_default_widths(self) -> None:
         self._fit_widths(self._default_widths)
 
@@ -235,11 +257,12 @@ class _TableLayoutController(QObject):
         ]
         if not visible:
             return
-        minimum = header.minimumSectionSize()
         widths = {
-            column: max(source_widths[column], minimum) for column in visible
+            column: max(source_widths[column], self._minimum_widths[column])
+            for column in visible
         }
-        available = max(self._table.viewport().width() - 4, minimum * len(visible))
+        required = sum(self._minimum_widths[column] for column in visible)
+        available = max(self._table.viewport().width() - 4, required)
         total = sum(widths.values())
         if total > available:
             overflow = total - available
@@ -254,7 +277,7 @@ class _TableLayoutController(QObject):
                 reverse=True,
             )
             for column in (*stretch_first, *fixed_after):
-                reducible = max(widths[column] - minimum, 0)
+                reducible = max(widths[column] - self._minimum_widths[column], 0)
                 reduction = min(reducible, overflow)
                 widths[column] -= reduction
                 overflow -= reduction
@@ -464,6 +487,19 @@ def enable_splitter_layout(
     )
 
 
+def set_managed_column_hidden(
+    table: QTableWidget,
+    column: int,
+    hidden: bool,
+) -> None:
+    """Keep a programmatically hidden column stable across layout restoration."""
+    controller = getattr(table, "_ui_layout_controller", None)
+    if isinstance(controller, _TableLayoutController):
+        controller.set_column_hidden(column, hidden)
+        return
+    table.setColumnHidden(column, hidden)
+
+
 def reset_persistent_layouts(root: QObject, store: UiLayoutStore | None) -> None:
     """Reset every managed table and splitter below ``root`` immediately."""
     if store is not None:
@@ -497,6 +533,13 @@ def set_column_widths(table: QTableWidget, widths: Sequence[int]) -> None:
     table._ui_default_column_widths = tuple(widths)  # type: ignore[attr-defined]
     for column, width in enumerate(widths):
         table.setColumnWidth(column, width)
+
+
+def set_column_minimum_widths(table: QTableWidget, widths: Sequence[int]) -> None:
+    """Keep critical columns readable even when restoring an older saved layout."""
+    if len(widths) != table.columnCount():
+        raise ValueError("minimum width count must match table column count")
+    table._ui_minimum_column_widths = tuple(widths)  # type: ignore[attr-defined]
 
 
 def set_responsive_columns(

@@ -45,9 +45,7 @@ from smt_guard.ui.tables import (
 class MasterDataRepository(Protocol):
     """Operations required by the device and station screen."""
 
-    def add_device(
-        self, code: str, name: str, line: str, *, actor: str = "SYSTEM"
-    ) -> Device:
+    def add_device(self, code: str, name: str, line: str, *, actor: str = "SYSTEM") -> Device:
         """Create one device."""
         ...
 
@@ -133,9 +131,7 @@ class MasterDataRepository(Protocol):
         self, device_code: str, station_code: str, *, actor: str = "SYSTEM"
     ) -> None: ...
 
-    def delete_station(
-        self, device_code: str, station_code: str, *, actor: str = "SYSTEM"
-    ) -> None:
+    def delete_station(self, device_code: str, station_code: str, *, actor: str = "SYSTEM") -> None:
         """Delete one unreferenced station."""
         ...
 
@@ -327,6 +323,10 @@ class DeviceStationWidget(QWidget):
 
         self.station_table = self._table(("站位编码", "站位名称", "状态", "已引用"))
         set_column_widths(self.station_table, (110, 170, 70, 70))
+        # "已引用" is troubleshooting information rather than a daily operation
+        # field.  Keep the data available to diagnostics, but do not spend scarce
+        # laptop table width on it by default.
+        self.station_table.setColumnHidden(3, True)
         set_responsive_columns(
             self.station_table,
             stretch=(0, 1),
@@ -465,6 +465,10 @@ class DeviceStationWidget(QWidget):
 
     @Slot()
     def _device_selection_changed(self) -> None:
+        # The station table can retain the same current row number while its
+        # model is replaced. Clear the editor first so a station belonging to
+        # the previous device is never presented under the new device.
+        self._clear_station_editor()
         row = self.device_table.currentRow()
         if row >= 0:
             for target, column in (
@@ -481,6 +485,7 @@ class DeviceStationWidget(QWidget):
     def _station_selection_changed(self) -> None:
         row = self.station_table.currentRow()
         if row < 0:
+            self._clear_station_editor()
             self._sync_station_state_buttons()
             return
         code = self.station_table.item(row, 0)
@@ -488,6 +493,10 @@ class DeviceStationWidget(QWidget):
         self.station_code_input.setText("" if code is None else code.text())
         self.station_name_input.setText("" if name is None else name.text())
         self._sync_station_state_buttons()
+
+    def _clear_station_editor(self) -> None:
+        self.station_code_input.clear()
+        self.station_name_input.clear()
 
     @Slot()
     def _add_device(self) -> None:
@@ -685,6 +694,7 @@ class DeviceStationWidget(QWidget):
         self._show_success(f"{success} {device}/{station}")
 
     def _refresh_stations(self, preferred_code: str | None = None) -> None:
+        self._clear_station_editor()
         device = self._current_device_code()
         if device is None:
             self.selected_device_label.setText("站位 · 尚未选择设备")
@@ -718,8 +728,12 @@ class DeviceStationWidget(QWidget):
         )
         if target_row >= 0:
             self.station_table.selectRow(target_row)
+            # Selecting row zero again after replacing the table contents may
+            # not emit a current-row change, so populate the editor explicitly.
+            self._station_selection_changed()
         else:
             self.station_table.clearSelection()
+            self._station_selection_changed()
         self._sync_station_state_buttons()
 
     def _sync_device_state_buttons(self) -> None:
@@ -729,6 +743,8 @@ class DeviceStationWidget(QWidget):
         enabled = selected and item.text() == "启用"
         self.enable_device_button.setEnabled(selected and not enabled)
         self.disable_device_button.setEnabled(enabled)
+        self.enable_device_button.setVisible(selected and not enabled)
+        self.disable_device_button.setVisible(enabled)
 
     def _sync_station_state_buttons(self) -> None:
         row = self.station_table.currentRow()
@@ -737,6 +753,8 @@ class DeviceStationWidget(QWidget):
         enabled = selected and item.text() == "启用"
         self.enable_station_button.setEnabled(selected and not enabled)
         self.disable_station_button.setEnabled(enabled)
+        self.enable_station_button.setVisible(selected and not enabled)
+        self.disable_station_button.setVisible(enabled)
 
     def _current_device_code(self) -> str | None:
         row = self.device_table.currentRow()
@@ -778,9 +796,7 @@ class DeviceStationWidget(QWidget):
     @Slot(bool)
     def _toggle_bulk_panel(self, expanded: bool) -> None:
         self.bulk_group.setVisible(expanded)
-        self.bulk_toggle_button.setText(
-            "收起批量创建站位" if expanded else "展开批量创建站位"
-        )
+        self.bulk_toggle_button.setText("收起批量创建站位" if expanded else "展开批量创建站位")
 
     @staticmethod
     def _required(value: str, label: str) -> str:

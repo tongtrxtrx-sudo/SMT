@@ -50,7 +50,6 @@ class VerificationRunTests(unittest.TestCase):
         )
 
     def scan_to_material(self, station: str = "F-01") -> None:
-        self.verification_run.handle_scan("SMT-01")
         self.verification_run.handle_scan(station)
 
     def test_records_complete_ok_attempt(self) -> None:
@@ -94,11 +93,11 @@ class VerificationRunTests(unittest.TestCase):
         self.assertTrue(records[-1].repeated)
         self.assertEqual(1, repeated.feedback.completed_stations)
 
-    def test_rejected_order_does_not_create_attempt(self) -> None:
-        update = self.verification_run.handle_scan("F-01")
+    def test_unknown_station_does_not_create_attempt(self) -> None:
+        update = self.verification_run.handle_scan("F-99")
 
         self.assertFalse(update.outcome.accepted)
-        self.assertEqual(ScanStep.DEVICE, update.outcome.next_step)
+        self.assertEqual(ScanStep.STATION, update.outcome.next_step)
         self.assertIsNone(update.attempt)
         self.assertEqual([], self.repository.list_for_run("RUN-1"))
 
@@ -110,7 +109,6 @@ class VerificationRunTests(unittest.TestCase):
             self.audio,
             clock=lambda: self.timestamp,
         )
-        verification_run.handle_scan("SMT-01")
         verification_run.handle_scan("F-01")
 
         with self.assertRaises(OSError):

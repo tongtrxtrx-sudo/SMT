@@ -66,7 +66,12 @@ class OperatorUiReadinessTests(unittest.TestCase):
         self.assertIn("Microsoft YaHei UI", QFontDatabase.families())
 
     def test_table_viewports_fill_with_light_background(self) -> None:
-        for index in range(self.runtime.window.tab_widget.count()):
+        visible_indexes = [
+            index
+            for index, button in enumerate(self.runtime.window.navigation_buttons)
+            if not button.isHidden()
+        ]
+        for index in visible_indexes:
             self.runtime.window.tab_widget.setCurrentIndex(index)
             self.app.processEvents()
             page = self.runtime.window.tab_widget.widget(index)

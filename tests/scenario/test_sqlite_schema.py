@@ -26,13 +26,13 @@ class SqliteSchemaTests(unittest.TestCase):
         )
         self.assertTrue(
             {"schema_migrations", "bom_versions", "bom_items", "production_runs", 
-             "run_station_states", "audit_logs"} <= tables
+             "run_station_states", "audit_logs", "job_number_sequences"} <= tables
         )
         applied = self.connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        self.assertEqual([(1,), (2,)], applied)
-        self.assertEqual(2, self.connection.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual([(1,), (2,), (3,), (4,)], applied)
+        self.assertEqual(4, self.connection.execute("PRAGMA user_version").fetchone()[0])
         self.assertEqual(1, self.connection.execute("PRAGMA foreign_keys").fetchone()[0])
 
     def test_initialization_is_idempotent_and_preserves_data(self) -> None:
@@ -59,6 +59,28 @@ class SqliteSchemaTests(unittest.TestCase):
                 ("SMT-99", "F-01", 1, 0),
             )
 
+    def test_station_code_is_unique_across_all_devices(self) -> None:
+        SqliteDatabase(self.connection).initialize()
+        self.connection.executemany(
+            "INSERT INTO devices (code, name, line, enabled) VALUES (?, ?, ?, ?)",
+            [
+                ("SMT-01", "Machine 1", "Line A", 1),
+                ("SMT-02", "Machine 2", "Line A", 1),
+            ],
+        )
+        self.connection.execute(
+            "INSERT INTO stations (device_code, code, enabled, referenced) "
+            "VALUES (?, ?, ?, ?)",
+            ("SMT-01", "F-01", 1, 0),
+        )
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.connection.execute(
+                "INSERT INTO stations (device_code, code, enabled, referenced) "
+                "VALUES (?, ?, ?, ?)",
+                ("SMT-02", "F-01", 1, 0),
+            )
+
     def test_upgrades_legacy_v1_database_without_losing_data(self) -> None:
         SqliteDatabase(self.connection, MIGRATIONS[:1]).initialize()
         self.connection.execute(
@@ -75,7 +97,7 @@ class SqliteSchemaTests(unittest.TestCase):
                 "SELECT code, name, archived FROM devices WHERE code = 'SMT-01'"
             ).fetchone(),
         )
-        self.assertEqual(2, self.connection.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(4, self.connection.execute("PRAGMA user_version").fetchone()[0])
 
     def test_repairs_lagging_user_version_after_validating_complete_history(self) -> None:
         database = SqliteDatabase(self.connection)
@@ -89,7 +111,7 @@ class SqliteSchemaTests(unittest.TestCase):
 
         database.initialize()
 
-        self.assertEqual(2, self.connection.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(4, self.connection.execute("PRAGMA user_version").fetchone()[0])
         self.assertEqual(
             ("SMT-01", "Machine 1"),
             self.connection.execute(
@@ -122,7 +144,7 @@ class SqliteSchemaTests(unittest.TestCase):
     def test_failed_migration_rolls_back_version_and_history(self) -> None:
         SqliteDatabase(self.connection).initialize()
         broken = Migration(
-            3,
+            5,
             "broken_test_migration",
             "CREATE TABLE should_rollback (id INTEGER); INVALID SQL;",
             irreversible_reason="Test-only failure",
@@ -138,12 +160,42 @@ class SqliteSchemaTests(unittest.TestCase):
             )
         }
         self.assertNotIn("should_rollback", tables)
-        self.assertEqual(2, self.connection.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(4, self.connection.execute("PRAGMA user_version").fetchone()[0])
         self.assertEqual(
-            [(1,), (2,)],
+            [(1,), (2,), (3,), (4,)],
             self.connection.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             ).fetchall(),
+        )
+
+    def test_duplicate_legacy_station_codes_roll_back_global_unique_migration(self) -> None:
+        SqliteDatabase(self.connection, MIGRATIONS[:2]).initialize()
+        self.connection.executemany(
+            "INSERT INTO devices (code, name, line, enabled) VALUES (?, ?, ?, ?)",
+            [
+                ("SMT-01", "Machine 1", "Line A", 1),
+                ("SMT-02", "Machine 2", "Line A", 1),
+            ],
+        )
+        self.connection.executemany(
+            "INSERT INTO stations (device_code, code, enabled, referenced) "
+            "VALUES (?, ?, ?, ?)",
+            [
+                ("SMT-01", "F-01", 1, 0),
+                ("SMT-02", "F-01", 1, 0),
+            ],
+        )
+        self.connection.commit()
+
+        with self.assertRaisesRegex(MigrationError, "globally_unique_station_codes"):
+            SqliteDatabase(self.connection).initialize()
+
+        self.assertEqual(2, self.connection.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(
+            2,
+            self.connection.execute(
+                "SELECT COUNT(*) FROM stations WHERE code = 'F-01'"
+            ).fetchone()[0],
         )
 
     def test_rejects_database_newer_than_application(self) -> None:

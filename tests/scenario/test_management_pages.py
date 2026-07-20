@@ -66,6 +66,21 @@ class ManagementPageTests(unittest.TestCase):
             RUN_STATUS_TEXT,
         )
 
+    def test_audit_display_localizes_actions_actors_and_json_fields(self) -> None:
+        self.assertEqual("删除", AuditLogWidget.ACTION_NAMES["DELETE"])
+        self.assertEqual("归档", AuditLogWidget.ACTION_NAMES["ARCHIVE"])
+        self.assertEqual("系统迁移", AuditLogWidget.display_actor("SYSTEM_MIGRATION"))
+        rendered = AuditLogWidget.format_changes(
+            '{"code": "SMT01", "enabled": false, "archived": true}'
+        )
+        self.assertIn("编码：SMT01", rendered)
+        self.assertIn("启用状态：否", rendered)
+        self.assertIn("已归档：是", rendered)
+        self.assertIn(
+            "站位数：5",
+            AuditLogWidget.format_changes('{"station_count": 5}'),
+        )
+
     def setUp(self) -> None:
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -89,9 +104,7 @@ class ManagementPageTests(unittest.TestCase):
             },
         )
 
-    def import_bom(
-        self, version: str, material: str, *additional_materials: str
-    ) -> BomVersion:
+    def import_bom(self, version: str, material: str, *additional_materials: str) -> BomVersion:
         source = self.directory / f"{version}.xlsx"
         source.write_bytes(version.encode())
         return SqliteBomRepository(self.connection).import_document(
@@ -130,7 +143,8 @@ class ManagementPageTests(unittest.TestCase):
             {widget.version_table.item(row, 2).text() for row in range(2)},  # type: ignore[union-attr]
         )
         self.assertEqual(
-            "版本定位", widget.version_table.horizontalHeaderItem(2).text()  # type: ignore[union-attr]
+            "版本定位",
+            widget.version_table.horizontalHeaderItem(2).text(),  # type: ignore[union-attr]
         )
         self.assertFalse(hasattr(widget, "activate_button"))
         self.assertFalse(hasattr(widget, "disable_button"))
@@ -235,21 +249,18 @@ class ManagementPageTests(unittest.TestCase):
         assert filter_card is not None
         self.assertEqual(760, filter_card.minimumWidth())
         self.assertEqual(980, filter_card.maximumWidth())
-        version_item = widget.configuration_table.item(0, 3)
+        version_item = widget.configuration_table.item(0, 1)
         assert version_item is not None
         self.assertEqual(version_item.text(), version_item.toolTip())
-        self.assertEqual("Board", widget.configuration_table.item(0, 1).text())  # type: ignore[union-attr]
-        self.assertEqual("Main", widget.configuration_table.item(0, 2).text())  # type: ignore[union-attr]
-        self.assertEqual("启用", widget.configuration_table.item(0, 4).text())  # type: ignore[union-attr]
-        self.assertEqual("BOM-V1", widget.configuration_table.item(0, 5).text())  # type: ignore[union-attr]
+        self.assertEqual(5, widget.configuration_table.columnCount())
+        self.assertEqual("V1", widget.configuration_table.item(0, 1).text())  # type: ignore[union-attr]
+        self.assertEqual("启用", widget.configuration_table.item(0, 2).text())  # type: ignore[union-attr]
+        self.assertEqual("1", widget.configuration_table.item(0, 3).text())  # type: ignore[union-attr]
         self.assertFalse(widget.configuration_table.isColumnHidden(0))
-        self.assertTrue(widget.configuration_table.isColumnHidden(1))
-        self.assertTrue(widget.configuration_table.isColumnHidden(2))
-        self.assertFalse(widget.configuration_table.isColumnHidden(3))
-        self.assertFalse(widget.configuration_table.isColumnHidden(4))
-        self.assertFalse(widget.configuration_table.isColumnHidden(5))
+        self.assertFalse(widget.configuration_table.isColumnHidden(1))
+        self.assertFalse(widget.configuration_table.isColumnHidden(2))
         self.assertEqual("复制为草稿并编辑", widget.copy_button.text())
-        self.assertEqual("保存修改", widget.save_draft_button.text())
+        self.assertEqual("保存并校验", widget.save_draft_button.text())
         self.assertFalse(widget.add_row_button.isEnabled())
         self.assertFalse(widget.remove_row_button.isEnabled())
         self.assertFalse(widget.save_draft_button.isEnabled())
@@ -267,7 +278,7 @@ class ManagementPageTests(unittest.TestCase):
         self.assertIn("当前为草稿", widget.edit_hint_label.text())
         self.assertTrue(widget.activate_button.isEnabled())
         self.assertFalse(widget.disable_button.isEnabled())
-        widget.assignment_table.item(0, 2).setText("M-2")  # type: ignore[union-attr]
+        widget.assignment_table.item(0, 1).setText("M-2")  # type: ignore[union-attr]
         widget.save_draft_button.click()
         widget.activate_button.click()
         self.assertFalse(widget.activate_button.isEnabled())
@@ -315,24 +326,25 @@ class ManagementPageTests(unittest.TestCase):
 
         run_id_item = run_widget.run_table.item(0, 0)
         assert run_id_item is not None
-        self.assertEqual("RUN-UI", run_id_item.toolTip())
-        self.assertEqual(6, run_widget.run_table.columnCount())
+        self.assertEqual("260714-001", run_id_item.text())
+        self.assertIn("RUN-UI", run_id_item.toolTip())
+        self.assertEqual(5, run_widget.run_table.columnCount())
         product_version_header = run_widget.run_table.horizontalHeaderItem(1)
         assert product_version_header is not None
-        self.assertEqual("产品 / 版本", product_version_header.text())
-        self.assertEqual("查询运行", run_widget.query_button.text())
+        self.assertEqual("产品 / 配置版本", product_version_header.text())
+        self.assertEqual("查询作业", run_widget.query_button.text())
         self.assertLess(run_widget.query_button.x(), int(run_widget.width() * 0.75))
         self.assertGreaterEqual(
             run_widget.run_table.columnWidth(0),
-            160,
+            128,
             msg=(
                 f"splitter={run_widget.splitter.sizes()} "
                 f"table={run_widget.run_table.width()} "
                 f"viewport={run_widget.run_table.viewport().width()} "
-                f"columns={[run_widget.run_table.columnWidth(i) for i in range(6)]}"
+                f"columns={[run_widget.run_table.columnWidth(i) for i in range(5)]}"
             ),
         )
-        self.assertTrue(
+        self.assertFalse(
             run_widget.run_table.isColumnHidden(2),
             msg=(
                 f"splitter={run_widget.splitter.sizes()} "
@@ -340,13 +352,18 @@ class ManagementPageTests(unittest.TestCase):
                 f"viewport={run_widget.run_table.viewport().width()}"
             ),
         )
-        self.assertTrue(run_widget.run_table.isColumnHidden(4))
+        self.assertTrue(run_widget.run_table.isColumnHidden(3))
+        self.assertFalse(run_widget.run_table.isColumnHidden(4))
         self.assertAlmostEqual(
             run_widget.splitter.sizes()[0],
             run_widget.splitter.sizes()[1],
             delta=30,
         )
         self.assertEqual(0, run_widget.run_table.horizontalScrollBar().maximum())
+        started_at_item = run_widget.run_table.item(0, 4)
+        assert started_at_item is not None
+        self.assertEqual("07-14 10:00", started_at_item.text())
+        self.assertIn("2026-07-14 10:00", started_at_item.toolTip())
         self.assertEqual(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded,
             run_widget.run_table.horizontalScrollBarPolicy(),
@@ -363,12 +380,12 @@ class ManagementPageTests(unittest.TestCase):
             run_widget.station_table.horizontalScrollBarPolicy(),
         )
         self.assertEqual(0, run_widget.station_table.horizontalScrollBar().maximum())
-        status_item = run_widget.run_table.item(0, 3)
+        status_item = run_widget.run_table.item(0, 2)
         assert status_item is not None
         self.assertEqual("已中断", status_item.text())
         self.assertIn("OP-UI", run_widget.snapshot_label.text())
         self.assertIn("状态：已中断", run_widget.snapshot_label.text())
-        self.assertEqual("RUN-UI", run_widget.run_summary_title.text())
+        self.assertEqual("260714-001", run_widget.run_summary_title.text())
         self.assertEqual("已中断", run_widget.run_status_chip.text())
         self.assertEqual("0 / 1", run_widget.run_progress_chip.text())
         self.assertEqual("NG 0", run_widget.run_ng_chip.text())
@@ -381,9 +398,7 @@ class ManagementPageTests(unittest.TestCase):
         run_widget.date_range.seven_days_button.click()
         self.assertEqual(1, run_widget.run_table.rowCount())
 
-        audit_widget = AuditLogWidget(
-            SqliteAuditRepository(self.connection), clock=self.clock
-        )
+        audit_widget = AuditLogWidget(SqliteAuditRepository(self.connection), clock=self.clock)
         self.addCleanup(audit_widget.close)
         audit_widget.actor_input.setText("OP-UI")
         audit_widget.entity_type_input.setText("PRODUCTION_RUN")
@@ -398,7 +413,7 @@ class ManagementPageTests(unittest.TestCase):
         self.assertEqual(entity_key.text(), entity_key.toolTip())
         self.assertTrue(audit_widget.audit_table.isColumnHidden(6))
         self.assertTrue(audit_widget.audit_table.isColumnHidden(7))
-        self.assertIn("生产运行", audit_widget.detail_title.text())
+        self.assertIn("作业记录", audit_widget.detail_title.text())
         self.assertIn("RUN-UI", audit_widget.detail_meta.text())
         self.assertEqual(RunStatus.INTERRUPTED, runs.get("RUN-UI").status)
         self.assertIsInstance(audit_widget.started_from_input, QDateTimeEdit)
@@ -428,7 +443,7 @@ class ManagementPageTests(unittest.TestCase):
         self.assertGreater(widget.audit_table.rowCount(), 0)
         self.assertIn("查询完成：", widget.status_label.text())
 
-    def test_run_refresh_renders_new_first_row_even_when_row_zero_stays_selected(self) -> None:
+    def test_run_refresh_preserves_the_selected_job_when_it_still_exists(self) -> None:
         configurations = SqliteProductConfigurationRepository(self.connection)
         first_configuration = ProductConfiguration("501000087", "V1", {("SMT-01", "F-01"): "M-1"})
         configurations.save(first_configuration, actor="OP-UI")
@@ -461,13 +476,13 @@ class ManagementPageTests(unittest.TestCase):
 
         widget.refresh()
 
-        self.assertEqual("RUN-NEW", widget.run_table.item(0, 0).text())  # type: ignore[union-attr]
-        self.assertEqual(0, widget.run_table.currentRow())
-        self.assertIn("501000087/V2", widget.snapshot_label.text())
-        self.assertIn("OP-NEW", widget.snapshot_label.text())
-        self.assertFalse(widget.resume_button.isEnabled())
-        self.assertTrue(widget.interrupt_button.isEnabled())
-        self.assertEqual("M-2", widget.station_table.item(0, 2).text())  # type: ignore[union-attr]
+        self.assertEqual("260714-002", widget.run_table.item(0, 0).text())  # type: ignore[union-attr]
+        self.assertEqual(1, widget.run_table.currentRow())
+        self.assertIn("501000087/V1", widget.snapshot_label.text())
+        self.assertIn("OP-OLD", widget.snapshot_label.text())
+        self.assertTrue(widget.resume_button.isEnabled())
+        self.assertFalse(widget.interrupt_button.isEnabled())
+        self.assertEqual("M-1", widget.station_table.item(0, 2).text())  # type: ignore[union-attr]
 
         widget.query_input.setText("NO-SUCH-RUN")
         widget.refresh()
@@ -507,9 +522,9 @@ class ManagementPageTests(unittest.TestCase):
         self.assertFalse(widget.scan_input.isEnabled())
         self.assertEqual(
             [
-                VoicePrompt.SCAN_DEVICE,
+                VoicePrompt.SCAN_STATION,
                 VoicePrompt.RUN_INTERRUPTED,
-                VoicePrompt.SCAN_DEVICE,
+                VoicePrompt.SCAN_STATION,
                 VoicePrompt.RUN_INTERRUPTED,
             ],
             announcer.prompts,
@@ -542,9 +557,7 @@ class ManagementPageTests(unittest.TestCase):
         self.assertFalse(config_widget.activate_button.isEnabled())
         self.assertFalse(config_widget.disable_button.isEnabled())
         configuration_import_requests: list[bool] = []
-        config_widget.import_requested.connect(
-            lambda: configuration_import_requests.append(True)
-        )
+        config_widget.import_requested.connect(lambda: configuration_import_requests.append(True))
         self.assertFalse(config_widget.import_button.isHidden())
         config_widget.import_button.click()
         self.assertEqual([True], configuration_import_requests)

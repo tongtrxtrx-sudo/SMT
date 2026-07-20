@@ -41,6 +41,7 @@ from smt_guard.ui.tables import (
     UiLayoutStore,
     enable_table_layout,
     set_column_widths,
+    set_managed_column_hidden,
     set_responsive_columns,
 )
 
@@ -64,9 +65,7 @@ class AttemptHistory(AttemptSink, Protocol):
 class RunManagementPersistence(RunPersistence, Protocol):
     def get(self, run_id: str) -> ProductionRun: ...
 
-    def resume(
-        self, run_id: str, *, operator: str, resumed_at: datetime
-    ) -> ProductionRun: ...
+    def resume(self, run_id: str, *, operator: str, resumed_at: datetime) -> ProductionRun: ...
 
     def completed_station_keys(self, run_id: str) -> set[tuple[str, str]]: ...
 
@@ -136,7 +135,7 @@ class ScanWidget(QWidget):
             completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.configuration_combo.setMinimumWidth(260)
         self.configuration_combo.setMaximumWidth(900)
-        self.start_button = QPushButton("开始新运行")
+        self.start_button = QPushButton("开始作业")
         self.start_button.setProperty("actionRole", "primary")
         self.import_configuration_button = QPushButton("没有可用配置，前往导入配置")
         self.import_configuration_button.setProperty("actionRole", "primary")
@@ -149,8 +148,9 @@ class ScanWidget(QWidget):
 
         self.product_summary_label = QLabel("产品：未选择")
         self.product_summary_label.setObjectName("productSummary")
+        self.product_summary_label.hide()
         layout.addWidget(self.product_summary_label)
-        self.run_label = QLabel("运行：未开始")
+        self.run_label = QLabel("作业：未开始")
         self.run_label.setStyleSheet("color: #667085;")
         layout.addWidget(self.run_label)
 
@@ -166,32 +166,33 @@ class ScanWidget(QWidget):
         hero_column_layout.setSpacing(10)
         self.hero_card = QFrame()
         self.hero_card.setObjectName("scanHero")
-        self.hero_card.setMinimumHeight(230)
+        self.hero_card.setMinimumHeight(170)
         hero_layout = QVBoxLayout(self.hero_card)
         hero_layout.setContentsMargins(22, 18, 22, 18)
         hero_layout.setSpacing(10)
-        self.scanner_status_button = QPushButton("扫码枪等待运行")
+        self.scanner_status_button = QPushButton("扫码枪等待作业")
         self.scanner_status_button.setEnabled(False)
         self.scanner_status_button.setToolTip("扫码输入框获得焦点后即可接收扫码枪输入")
-        hero_layout.addWidget(
-            self.scanner_status_button, 0, Qt.AlignmentFlag.AlignHCenter
-        )
+        hero_layout.addWidget(self.scanner_status_button, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        self.feedback_label = QLabel("请先开始运行")
+        self.feedback_label = QLabel("请先开始作业")
         self.feedback_label.setObjectName("scanFeedback")
         self.feedback_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.feedback_label.setMinimumHeight(110)
-        self.feedback_label.setMaximumHeight(310)
+        self.feedback_label.setMinimumHeight(72)
         self.feedback_label.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
         self.feedback_label.setWordWrap(True)
         hero_layout.addWidget(self.feedback_label, 1)
-        self.step_label = QLabel("设备 1  →  站位 2  →  物料 3")
+        self.step_label = QLabel("站位 1  →  物料 2")
         self.step_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.step_label.setStyleSheet("color: #667085;")
         hero_layout.addWidget(self.step_label)
+        self.rescan_station_button = QPushButton("重新扫描站位")
+        self.rescan_station_button.setToolTip("放弃当前站位，返回站位扫码步骤")
+        self.rescan_station_button.hide()
+        hero_layout.addWidget(self.rescan_station_button, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self.material_panel = QWidget()
         material_row = QHBoxLayout(self.material_panel)
@@ -224,6 +225,7 @@ class ScanWidget(QWidget):
         self.submit_button.setToolTip("仅用于键盘调试；扫码枪发送 Enter 时会自动提交")
         self.submit_button.setMinimumHeight(44)
         self.submit_button.setEnabled(False)
+        self.submit_button.hide()
         scan_row.addWidget(self.scan_input, 1)
         scan_row.addWidget(self.submit_button)
         self.input_card.setLayout(scan_row)
@@ -244,7 +246,9 @@ class ScanWidget(QWidget):
         progress_title.setObjectName("sectionTitle")
         progress_layout.addWidget(progress_title)
         self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 0)
+        # A 0..0 range is Qt's indeterminate/busy mode, which misleadingly
+        # renders an animated green bar beside the idle "0 / 0" count.
+        self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setFixedHeight(22)
@@ -287,7 +291,11 @@ class ScanWidget(QWidget):
             self._layout_store,
         )
         self.attempt_table.setMinimumHeight(150)
-        self.attempt_table.setVisible(False)
+        set_managed_column_hidden(self.attempt_table, 1, True)
+        set_managed_column_hidden(self.attempt_table, 6, True)
+        self.history_button.setChecked(True)
+        self.history_button.setText("收起")
+        self.attempt_table.setVisible(True)
         history_layout.addWidget(self.attempt_table, 1)
         overview_layout.addWidget(self.history_card, 1)
         self.workflow_layout.addWidget(self.overview_column)
@@ -303,10 +311,9 @@ class ScanWidget(QWidget):
         self.scanner_status_button.clicked.connect(self.focus_scanner)
         self.history_button.toggled.connect(self._toggle_history)
         self.history_button.clicked.connect(self._remember_history_override)
+        self.rescan_station_button.clicked.connect(self._rescan_station)
         self.import_configuration_button.clicked.connect(self.import_requested.emit)
-        self.configuration_combo.currentTextChanged.connect(
-            self._update_product_summary
-        )
+        self.configuration_combo.currentTextChanged.connect(self._update_product_summary)
         self.configuration_combo.currentTextChanged.connect(
             self._update_configuration_selection_state
         )
@@ -323,7 +330,7 @@ class ScanWidget(QWidget):
     def _toggle_history(self, expanded: bool) -> None:
         self.attempt_table.setVisible(expanded)
         self.history_button.setText("收起" if expanded else "展开")
-        self.history_card.setMinimumHeight(220 if expanded else 0)
+        self.history_card.setMinimumHeight(190 if expanded else 0)
         self.history_card.setMaximumHeight(16777215 if expanded else 82)
 
     @Slot(bool)
@@ -346,16 +353,17 @@ class ScanWidget(QWidget):
         self.input_card.setMinimumHeight(82 if wide else 66)
         self.scan_input.setMinimumHeight(56 if wide else 44)
         self.submit_button.setMinimumHeight(56 if wide else 44)
-        self.feedback_label.setMinimumHeight(150 if wide else 110)
-        self.hero_card.setMinimumHeight(320 if wide else 170)
-        self.hero_card.setMaximumHeight(400 if wide else 220)
-        self.hero_column.setMaximumHeight(492 if wide else 298)
+        self.feedback_label.setMinimumHeight(96 if wide else 72)
+        self.hero_card.setMinimumHeight(230 if wide else 170)
+        # The reduced feedback minimum now fits safely inside these compact
+        # bounds; unlike the previous 110px feedback minimum, it cannot force
+        # the scan prompt to be clipped by its parent.
+        self.hero_card.setMaximumHeight(280 if wide else 220)
+        self.hero_column.setMaximumHeight(374 if wide else 296)
         self.progress_card.setMaximumHeight(72)
         if not self._history_user_overridden:
-            self.history_button.setChecked(wide)
-        self.history_card.setMaximumHeight(
-            16777215 if self.history_button.isChecked() else 82
-        )
+            self.history_button.setChecked(True)
+        self.history_card.setMaximumHeight(16777215 if self.history_button.isChecked() else 82)
 
     @Slot()
     def refresh_configurations(self) -> None:
@@ -369,16 +377,13 @@ class ScanWidget(QWidget):
         self.configuration_combo.setEnabled(has_configurations)
         if has_configurations:
             self.configuration_combo.setCurrentIndex(0)
-        self._update_configuration_selection_state(
-            self.configuration_combo.currentText()
-        )
+        self._update_configuration_selection_state(self.configuration_combo.currentText())
         self.import_configuration_button.setVisible(not has_configurations)
         self._update_product_summary(self.configuration_combo.currentText())
         if self._run is None:
+            self._reset_idle_progress()
             self.feedback_label.setText(
-                "请选择产品配置并开始运行"
-                if has_configurations
-                else "没有可用配置，请前往导入配置"
+                "请选择产品配置并开始作业" if has_configurations else "没有可用配置，请前往导入配置"
             )
 
     @Slot()
@@ -395,7 +400,7 @@ class ScanWidget(QWidget):
         previous_run = self._run
         replaced_running = previous_run is not None and not previous_run.completed
         if replaced_running and previous_run is not None:
-            previous_run.interrupt("开始新的生产运行")
+            previous_run.interrupt("开始新的作业")
         self._run = VerificationRun(
             self._run_id_factory(),
             configuration,
@@ -406,7 +411,7 @@ class ScanWidget(QWidget):
             operator=operator,
         )
         self.run_label.setText(
-            f"运行：{self._run.run_id} · 进度 0/{len(configuration.assignments)}"
+            f"作业：{self._run.job_number} · 进度 0/{len(configuration.assignments)}"
         )
         self.product_summary_label.setText(
             f"产品：{configuration.product_code} / {configuration.version}"
@@ -441,6 +446,7 @@ class ScanWidget(QWidget):
             self._run.interrupt(reason)
             self._run = None
             self._set_scan_controls_enabled(False)
+            self._reset_idle_progress()
             self.selection_card.show()
             if reason != "应用关闭":
                 self._announcer.announce(VoicePrompt.RUN_INTERRUPTED)
@@ -449,12 +455,12 @@ class ScanWidget(QWidget):
     def resume_run(self, run_id: str) -> None:
         """Resume one interrupted persisted run into the scanner page."""
         if self._runs is None:
-            self._show_message("当前运行仓储不支持恢复", "error")
+            self._show_message("当前作业存储不支持恢复", "error")
             return
         try:
             operator = self._current_operator()
             if self._run is not None and not self._run.completed:
-                self._run.interrupt("恢复其他生产运行")
+                self._run.interrupt("恢复其他作业")
             persisted = self._runs.resume(run_id, operator=operator, resumed_at=self._clock())
             self._run = VerificationRun.resume(
                 persisted,
@@ -470,7 +476,7 @@ class ScanWidget(QWidget):
             return
         configuration = self._run.configuration
         self.run_label.setText(
-            f"运行：{self._run.run_id} · 进度 "
+            f"作业：{self._run.job_number} · 进度 "
             f"{self._run.initial_feedback.completed_stations}/"
             f"{len(configuration.assignments)} · 恢复人：{operator}"
         )
@@ -488,7 +494,7 @@ class ScanWidget(QWidget):
     def interrupt_run(self, run_id: str, reason: str) -> None:
         """Interrupt a selected running record and clear it if currently scanned."""
         if self._runs is None:
-            self._show_message("当前运行仓储不支持中断", "error")
+            self._show_message("当前作业存储不支持中断", "error")
             return
         try:
             operator = self._current_operator()
@@ -496,6 +502,7 @@ class ScanWidget(QWidget):
                 self._run.interrupt(reason)
                 self._run = None
                 self._set_scan_controls_enabled(False)
+                self._reset_idle_progress()
                 self.selection_card.show()
             else:
                 self._runs.interrupt(
@@ -507,7 +514,7 @@ class ScanWidget(QWidget):
         except (LookupError, ValueError) as error:
             self._show_message(str(error), "error")
             return
-        self._show_message(f"已中断运行 {run_id}", "neutral")
+        self._show_message(f"已中断作业 {run_id}", "neutral")
         self._announcer.announce(VoicePrompt.RUN_INTERRUPTED)
         self.run_changed.emit()
 
@@ -525,7 +532,7 @@ class ScanWidget(QWidget):
     @Slot()
     def _submit_scan(self) -> None:
         if self._run is None:
-            self._show_message("请先开始运行", "error")
+            self._show_message("请先开始作业", "error")
             self._announcer.announce(VoicePrompt.SCAN_REJECTED)
             return
         if self._run.completed:
@@ -561,6 +568,14 @@ class ScanWidget(QWidget):
         if self._run is not None and not self._run.completed:
             self._announcer.announce(SCAN_STEP_PROMPTS[self._run.current_step])
 
+    @Slot()
+    def _rescan_station(self) -> None:
+        if self._run is None or self._run.current_step is not ScanStep.MATERIAL:
+            return
+        self._render_feedback(self._run.reset_station_selection())
+        self._announce_scan_step()
+        QTimer.singleShot(0, self.focus_scanner)
+
     def _render_feedback(self, state: FeedbackState) -> None:
         feedback_state = {
             VisualIntent.NEUTRAL: "neutral",
@@ -571,15 +586,17 @@ class ScanWidget(QWidget):
         self._show_message(message, feedback_state)
         self.expected_label.setText(f"要求物料：{state.expected_material or '-'}")
         self.scanned_label.setText(f"扫码物料：{state.scanned_material or '-'}")
-        show_material = (
-            state.intent is VisualIntent.NG
-            or (
-                self._run is not None
-                and not state.complete
-                and self._run.current_step is ScanStep.MATERIAL
-            )
+        show_material = state.intent is VisualIntent.NG or (
+            self._run is not None
+            and not state.complete
+            and self._run.current_step is ScanStep.MATERIAL
         )
         self.material_panel.setVisible(show_material)
+        self.rescan_station_button.setVisible(
+            self._run is not None
+            and not self._run.completed
+            and self._run.current_step is ScanStep.MATERIAL
+        )
         self._render_step_indicator()
         self.progress_bar.setValue(state.completed_stations)
         self.progress_count_label.setText(
@@ -587,7 +604,7 @@ class ScanWidget(QWidget):
         )
         if self._run is not None:
             self.run_label.setText(
-                f"运行：{self._run.run_id} · 进度 "
+                f"作业：{self._run.job_number} · 进度 "
                 f"{state.completed_stations}/{self.progress_bar.maximum()}"
             )
         if state.complete:
@@ -605,14 +622,30 @@ class ScanWidget(QWidget):
         if not enabled:
             self.scan_input.clear()
 
+    def _reset_idle_progress(self) -> None:
+        """Render a genuinely empty idle progress state instead of busy mode."""
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        self.progress_count_label.setText("0 / 0")
+
     def _refresh_attempts(self) -> None:
         if self._run is None:
             return
         attempts = self._attempts.list_for_run(self._run.run_id)
+        set_managed_column_hidden(
+            self.attempt_table,
+            6,
+            not any(item.repeated for item in attempts),
+        )
         self.attempt_table.setRowCount(len(attempts))
         for row, attempt in enumerate(attempts):
+            timestamp = (
+                attempt.timestamp.strftime("%H:%M:%S")
+                if attempt.timestamp.date() == self._clock().date()
+                else display_datetime(attempt.timestamp)
+            )
             values = (
-                display_datetime(attempt.timestamp),
+                timestamp,
                 attempt.device_code,
                 attempt.station_code,
                 attempt.expected_material,
@@ -627,7 +660,6 @@ class ScanWidget(QWidget):
         step = self._run.current_step if self._run is not None else None
         if state == "neutral":
             palette = {
-                ScanStep.DEVICE: ("#eff8ff", "#2e90fa", "#175cd3"),
                 ScanStep.STATION: ("#fffaeb", "#f79009", "#b54708"),
                 ScanStep.MATERIAL: ("#ecfdf3", "#12b76a", "#067647"),
                 None: ("#ffffff", "#d0d5dd", "#344054"),
@@ -646,22 +678,18 @@ class ScanWidget(QWidget):
 
     def _render_step_indicator(self) -> None:
         if self._run is None or self._run.completed:
-            self.step_label.setText("设备 1  →  站位 2  →  物料 3")
+            self.step_label.setText("站位 1  →  物料 2")
             return
         labels = {
-            ScanStep.DEVICE: "● 设备 1  →  站位 2  →  物料 3",
-            ScanStep.STATION: "设备 1  →  ● 站位 2  →  物料 3",
-            ScanStep.MATERIAL: "设备 1  →  站位 2  →  ● 物料 3",
+            ScanStep.STATION: "● 站位 1  →  物料 2",
+            ScanStep.MATERIAL: "站位 1  →  ● 物料 2",
         }
         colors = {
-            ScanStep.DEVICE: "#175cd3",
             ScanStep.STATION: "#b54708",
             ScanStep.MATERIAL: "#067647",
         }
         self.step_label.setText(labels[self._run.current_step])
-        self.step_label.setStyleSheet(
-            f"color: {colors[self._run.current_step]}; font-weight: 600;"
-        )
+        self.step_label.setStyleSheet(f"color: {colors[self._run.current_step]}; font-weight: 600;")
 
     def _set_scanner_status(self, state: str) -> None:
         text, style = {
@@ -674,7 +702,7 @@ class ScanWidget(QWidget):
                 "color: #b54708; background: #fffaeb; border: 1px solid #fec84b;",
             ),
             "inactive": (
-                "扫码枪等待运行",
+                "扫码枪等待作业",
                 "color: #667085; background: #f2f4f7; border: 1px solid #d0d5dd;",
             ),
         }[state]
@@ -692,4 +720,5 @@ class ScanWidget(QWidget):
             self.product_summary_label.setText(
                 f"产品：{configuration}" if configuration else "产品：未选择"
             )
+
     run_changed = Signal()

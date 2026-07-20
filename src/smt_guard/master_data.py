@@ -105,8 +105,8 @@ class MasterDataService:
         device = self.get_device(device_code)
         normalized = normalize_code(station_code)
         key = (device.code, normalized)
-        if key in self._stations:
-            raise DuplicateCodeError(f"Duplicate station code: {device.code}/{normalized}")
+        if any(station.code == normalized for station in self._stations.values()):
+            raise DuplicateCodeError(f"Duplicate station code: {normalized}")
         station = Station(device.code, normalized)
         self._stations[key] = station
         return station
@@ -122,9 +122,10 @@ class MasterDataService:
     ) -> list[Station]:
         device = self.get_device(device_code)
         codes = [f"{prefix}{number:0{width}d}" for number in range(start, end + 1)]
-        duplicates = [code for code in codes if (device.code, code) in self._stations]
+        existing_codes = {station.code for station in self._stations.values()}
+        duplicates = [code for code in codes if code in existing_codes]
         if duplicates:
-            raise DuplicateCodeError(f"Duplicate station code: {device.code}/{duplicates[0]}")
+            raise DuplicateCodeError(f"Duplicate station code: {duplicates[0]}")
         return [self.add_station(device.code, code) for code in codes]
 
     def get_station(self, device_code: str, station_code: str) -> Station:
@@ -133,6 +134,14 @@ class MasterDataService:
             return self._stations[key]
         except KeyError as error:
             raise UnknownEntityError(f"Unknown station: {key[0]}/{key[1]}") from error
+
+    def resolve_station(self, station_code: str) -> Station:
+        """Resolve a globally unique station code to its owning device."""
+        normalized = normalize_code(station_code)
+        for station in self._stations.values():
+            if station.code == normalized:
+                return station
+        raise UnknownEntityError(f"Unknown station: {normalized}")
 
     def list_stations(self, device_code: str) -> list[Station]:
         normalized = self.get_device(device_code).code

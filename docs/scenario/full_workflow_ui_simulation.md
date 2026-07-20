@@ -10,8 +10,8 @@
 1. Confirm `OP-E2E` and create one device plus one station from the device/station page.
 2. Generate real `.xlsx` fixtures with `openpyxl`, import the BOM, review the station sheet, and enable
    the resulting product configuration.
-3. Start a production run and submit device, station, one wrong material, and the expected material
-   through the same Qt controls used by a scanner sending Enter.
+3. Start a production run and submit station, one wrong material, and the expected material through
+   the same Qt controls used by a scanner sending Enter; verify the device is resolved internally.
 4. Open production-run details, verify the NG and OK records, and export the selected run to CSV.
 5. Query the same run from record search and export it again through the advanced-query workflow.
 6. Update the device, disable and re-enable its station, then exercise BOM and product-configuration

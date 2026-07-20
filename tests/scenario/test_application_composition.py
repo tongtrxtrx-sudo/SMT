@@ -18,7 +18,6 @@ from smt_guard.app import ApplicationRuntime, create_runtime
 from smt_guard.feedback import FeedbackTone, VoicePrompt
 from smt_guard.scan import ProductConfiguration
 from smt_guard.ui.audits import AuditLogWidget
-from smt_guard.ui.boms import BomManagementWidget
 from smt_guard.ui.configurations import ConfigurationManagementWidget
 from smt_guard.ui.master_data import DeviceStationWidget
 from smt_guard.ui.operator import OperatorSessionWidget
@@ -125,12 +124,10 @@ class ApplicationCompositionTests(unittest.TestCase):
         self.assertEqual(
             [
                 "扫码作业",
-                "生产运行",
+                "作业记录",
                 "设备与站位",
-                "导入配置",
-                "BOM 管理",
                 "产品配置",
-                "审计日志",
+                "更多",
             ],
             labels,
         )
@@ -139,14 +136,23 @@ class ApplicationCompositionTests(unittest.TestCase):
                 self.runtime.window.RECORDS_TAB
             ].isHidden()
         )
+        self.assertTrue(
+            self.runtime.window.navigation_buttons[self.runtime.window.IMPORT_TAB].isHidden()
+        )
+        self.assertTrue(
+            self.runtime.window.navigation_buttons[self.runtime.window.BOMS_TAB].isHidden()
+        )
         self.assertIsInstance(
             self.runtime.window.tab_widget.widget(self.runtime.window.RECORDS_TAB),
             RecordQueryWidget,
         )
         self.assertTrue(self.runtime.window.navigation_buttons[0].isChecked())
         self.assertEqual(180, self.runtime.window.side_navigation.width())
-        self.assertIn("数据库正常", self.runtime.window.diagnostic_label.text())
-        self.assertEqual("恢复默认布局", self.runtime.window.reset_layout_button.text())
+        self.assertTrue(self.runtime.window.diagnostic_frame.isHidden())
+        self.assertEqual(
+            "重置表格列宽和分栏",
+            self.runtime.window.reset_layout_button.text(),
+        )
         self.assertEqual("SMT 扫码防错", self.runtime.window.windowTitle())
         operator_control = self.runtime.window.findChild(OperatorSessionWidget)
         if operator_control is None:
@@ -244,7 +250,6 @@ class ApplicationCompositionTests(unittest.TestCase):
         for page_index in (
             self.runtime.window.RUNS_TAB,
             self.runtime.window.MASTER_DATA_TAB,
-            self.runtime.window.BOMS_TAB,
             self.runtime.window.CONFIGURATIONS_TAB,
         ):
             with self.subTest(page_index=page_index):
@@ -341,18 +346,15 @@ class ApplicationCompositionTests(unittest.TestCase):
         self.runtime.operator_session.sign_in("OP-01")
         self.runtime.master_data.add_device("SMT-01", "Machine 1", "Line A")
         self.runtime.master_data.add_station("SMT-01", "F-01")
-        bom_path, station_path = self.write_import_workbooks()
+        _, station_path = self.write_import_workbooks()
         import_widget = self.runtime.import_widget
-        import_widget.bom_path_input.setText(str(bom_path))
+        import_widget.product_code_input.setText("501000087")
         import_widget.station_path_input.setText(str(station_path))
         import_widget.station_sheet_input.setText("Stations")
         import_widget.version_input.setText("V1")
 
-        import_widget.bom_import_button.click()
-        import_widget.review_button.click()
         import_widget.station_import_button.click()
         self.runtime.scan_widget.start_button.click()
-        self.scanner_enter("SMT-01")
         self.scanner_enter("F-01")
         self.scanner_enter("999999999")
         self.scanner_enter("013000081")
@@ -391,23 +393,17 @@ class ApplicationCompositionTests(unittest.TestCase):
             rows = list(csv.DictReader(stream))
 
         self.assertEqual(["NG", "OK"], [row["结果"] for row in rows])
-        provenance = self.runtime.connection.execute(
-            "SELECT imported_by FROM bom_versions"
-        ).fetchone()
         configuration_actor = self.runtime.connection.execute(
             "SELECT created_by FROM product_configurations"
         ).fetchone()
         run_actor = self.runtime.connection.execute(
             "SELECT operator FROM production_runs"
         ).fetchone()
-        self.assertEqual(("OP-01",), provenance)
         self.assertEqual(("OP-01",), configuration_actor)
         self.assertEqual(("OP-01",), run_actor)
         self.assertEqual(
             [
-                VoicePrompt.BOM_IMPORTED,
                 VoicePrompt.CONFIGURATION_IMPORTED,
-                VoicePrompt.SCAN_DEVICE,
                 VoicePrompt.SCAN_STATION,
                 VoicePrompt.SCAN_MATERIAL,
                 VoicePrompt.MATERIAL_NG,
@@ -439,20 +435,18 @@ class ApplicationCompositionTests(unittest.TestCase):
         master_widget.station_name_input.setText("前段一号站位")
         master_widget.add_station_button.click()
 
-        bom_path, station_path = self.write_import_workbooks()
+        _, station_path = self.write_import_workbooks()
         import_widget = self.runtime.import_widget
-        import_widget.bom_path_input.setText(str(bom_path))
+        import_widget.product_code_input.setText("501000087")
         import_widget.station_path_input.setText(str(station_path))
         import_widget.station_sheet_input.setText("Stations")
         import_widget.version_input.setText("V1")
-        import_widget.bom_import_button.click()
-        import_widget.review_button.click()
         import_widget.station_import_button.click()
         self.assertIn("导入成功", import_widget.status_label.text())
 
         self.runtime.window.tab_widget.setCurrentIndex(self.runtime.window.SCAN_TAB)
         self.runtime.scan_widget.start_button.click()
-        for code in ("SMT-01", "F-01", "WRONG", "013000081"):
+        for code in ("F-01", "WRONG", "013000081"):
             self.scanner_enter(code)
         self.assertEqual(2, self.runtime.scan_widget.attempt_table.rowCount())
 
@@ -492,14 +486,6 @@ class ApplicationCompositionTests(unittest.TestCase):
         master_widget.enable_station_button.click()
         self.assertTrue(self.runtime.master_data.is_station_enabled("SMT-01", "F-01"))
 
-        bom_widget = self.runtime.window.tab_widget.widget(self.runtime.window.BOMS_TAB)
-        if not isinstance(bom_widget, BomManagementWidget):
-            raise AssertionError("BOM tab contains an unexpected widget")
-        bom_widget.refresh()
-        self.assertEqual("当前版本", bom_widget.version_table.item(0, 2).text())  # type: ignore[union-attr]
-        self.assertFalse(hasattr(bom_widget, "activate_button"))
-        self.assertFalse(hasattr(bom_widget, "disable_button"))
-
         configuration_widget = self.runtime.window.tab_widget.widget(
             self.runtime.window.CONFIGURATIONS_TAB
         )
@@ -529,10 +515,6 @@ class ApplicationCompositionTests(unittest.TestCase):
             master_widget.bulk_group.height(),
             master_widget.bulk_group.minimumSizeHint().height(),
         )
-
-        self.runtime.window.page_stack.setCurrentIndex(self.runtime.window.BOMS_TAB)
-        self.app.processEvents()
-        self.assertGreaterEqual(bom_widget.material_table.viewport().height(), 72)
 
         self.runtime.window.page_stack.setCurrentIndex(
             self.runtime.window.CONFIGURATIONS_TAB

@@ -13,7 +13,6 @@ from smt_guard.verification import (
 class ScanStep(Enum):
     """Expected type of the next scanner input."""
 
-    DEVICE = "DEVICE"
     STATION = "STATION"
     MATERIAL = "MATERIAL"
 
@@ -38,6 +37,14 @@ class ProductConfiguration:
     def contains_station(self, device_code: str, station_code: str) -> bool:
         return (device_code.strip(), station_code.strip()) in self.assignments
 
+    def device_for_station(self, station_code: str) -> str | None:
+        """Resolve the owning device for a globally unique configured station."""
+        normalized = station_code.strip()
+        matches = [device for device, station in self.assignments if station == normalized]
+        if len(matches) > 1:
+            raise ValueError(f"Station code is not globally unique: {normalized}")
+        return matches[0] if matches else None
+
 
 @dataclass(frozen=True)
 class ScanOutcome:
@@ -52,7 +59,7 @@ class ScanOutcome:
 
 
 class ScanSession:
-    """Process device, station, and material scans in a strict sequence."""
+    """Process globally unique station and material scans in a strict sequence."""
 
     def __init__(
         self,
@@ -61,7 +68,7 @@ class ScanSession:
     ) -> None:
         self._configuration = configuration
         self._verifier = verifier or MaterialVerifier()
-        self._step = ScanStep.DEVICE
+        self._step = ScanStep.STATION
         self._device: str | None = None
         self._station: str | None = None
 
@@ -88,42 +95,35 @@ class ScanSession:
         """Restore scanner state when a material attempt cannot be persisted."""
         self._step, self._device, self._station = state
 
+    def reset_station(self) -> None:
+        """Discard the selected station and explicitly return to station scanning."""
+        self._device = None
+        self._station = None
+        self._step = ScanStep.STATION
+
     def handle_scan(self, raw_code: str) -> ScanOutcome:
         code = normalize_material_code(raw_code)
-        if self._step is ScanStep.DEVICE:
-            return self._handle_device(code)
         if self._step is ScanStep.STATION:
             return self._handle_station(code)
         return self._handle_material(code)
 
-    def _handle_device(self, code: str) -> ScanOutcome:
-        if not self._configuration.contains_device(code):
-            return self._rejected(ScanStep.DEVICE, "Unknown device")
-        self._device = code
-        self._step = ScanStep.STATION
-        return ScanOutcome(True, self._step)
-
     def _handle_station(self, code: str) -> ScanOutcome:
-        if self._device is not None and self._configuration.contains_station(self._device, code):
-            self._station = code
-            self._step = ScanStep.MATERIAL
-            return ScanOutcome(True, self._step)
-        if self._configuration.contains_device(code):
-            self._device = code
-            self._station = None
-            self._step = ScanStep.STATION
-            return ScanOutcome(True, self._step)
-        if self._device is None:
-            return self._rejected(ScanStep.STATION, "Unknown station for selected device")
-        return self._rejected(ScanStep.STATION, "Unknown station for selected device")
+        device = self._configuration.device_for_station(code)
+        if device is None:
+            return self._rejected(ScanStep.STATION, "Unknown station")
+        self._device = device
+        self._station = code
+        self._step = ScanStep.MATERIAL
+        return ScanOutcome(True, self._step)
 
     def _handle_material(self, code: str) -> ScanOutcome:
         if self._device is None or self._station is None:
-            self._step = ScanStep.DEVICE
-            return self._rejected(self._step, "Device and station are required")
+            self._step = ScanStep.STATION
+            return self._rejected(self._step, "Station is required")
         expected = self._configuration.required_material(self._device, self._station)
         result = self._verifier.verify(expected, code)
         if result is VerificationResult.OK:
+            self._device = None
             self._station = None
             self._step = ScanStep.STATION
         return ScanOutcome(

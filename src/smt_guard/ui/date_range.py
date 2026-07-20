@@ -26,10 +26,12 @@ class DateRangeFilter(QWidget):
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel("开始时间"))
+        self.started_from_label = QLabel("开始时间")
+        layout.addWidget(self.started_from_label)
         self.started_from_input = self._create_editor()
         layout.addWidget(self.started_from_input)
-        layout.addWidget(QLabel("至"))
+        self.range_separator = QLabel("至")
+        layout.addWidget(self.range_separator)
         self.started_to_input = self._create_editor()
         layout.addWidget(self.started_to_input)
         layout.addSpacing(8)
@@ -37,10 +39,13 @@ class DateRangeFilter(QWidget):
         self.today_button = QPushButton("今天")
         self.seven_days_button = QPushButton("近 7 天")
         self.thirty_days_button = QPushButton("近 30 天")
+        self.custom_button = QPushButton("自定义时间")
+        self.custom_button.setCheckable(True)
         for button in (
             self.today_button,
             self.seven_days_button,
             self.thirty_days_button,
+            self.custom_button,
         ):
             button.setProperty("actionRole", "secondary")
             layout.addWidget(button)
@@ -49,7 +54,18 @@ class DateRangeFilter(QWidget):
         self.today_button.clicked.connect(lambda: self.set_recent_days(1))
         self.seven_days_button.clicked.connect(lambda: self.set_recent_days(7))
         self.thirty_days_button.clicked.connect(lambda: self.set_recent_days(30))
+        self.custom_button.toggled.connect(self._set_custom_visible)
+        self._set_custom_visible(False)
         self.set_recent_days(default_days, emit_signal=False)
+
+    def _set_custom_visible(self, visible: bool) -> None:
+        for widget in (
+            self.started_from_label,
+            self.started_from_input,
+            self.range_separator,
+            self.started_to_input,
+        ):
+            widget.setVisible(visible)
 
     @staticmethod
     def _create_editor() -> QDateTimeEdit:
@@ -69,6 +85,7 @@ class DateRangeFilter(QWidget):
         started_to = datetime.combine(now.date(), time.max, tzinfo=now.tzinfo)
         self.started_from_input.setDateTime(self._to_qdatetime(started_from))
         self.started_to_input.setDateTime(self._to_qdatetime(started_to))
+        self.custom_button.setChecked(False)
         if emit_signal:
             self.range_selected.emit()
 

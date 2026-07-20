@@ -6,7 +6,7 @@
 
 ## Test Steps
 
-- Case 1 (waiting state): Show that the system is waiting for a device, station, or material.
+- Case 1 (waiting state): Show that the system is waiting for a station or material.
 - Case 2 (OK): Expose a green OK state with expected and scanned material codes.
 - Case 3 (NG): Expose a red NG state with expected and scanned material codes.
 - Case 4 (progress): Increase completed-station progress only after an OK result.

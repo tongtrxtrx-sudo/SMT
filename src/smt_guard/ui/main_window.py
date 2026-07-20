@@ -391,13 +391,13 @@ class MainWindow(QMainWindow):
 
     PAGE_NAMES = (
         "扫码作业",
-        "生产运行",
+        "作业记录",
         "记录查询",
         "设备与站位",
-        "导入配置",
-        "BOM 管理",
+        "导入产品配置",
+        "BOM 历史",
         "产品配置",
-        "审计日志",
+        "更多",
     )
 
     def __init__(
@@ -450,13 +450,13 @@ class MainWindow(QMainWindow):
         section_starts = {0: "作业", 3: "配置", 7: "系统"}
         tooltips = (
             "现场主作业",
-            "运行进度与扫码记录",
+            "作业进度与扫码记录",
             "高级记录查询",
             "基础配置",
-            "按步骤导入",
-            "BOM 生命周期",
+            "导入站位物料配置",
+            "历史 BOM 数据",
             "产品配置管理",
-            "系统追溯",
+            "审计追溯与界面设置",
         )
         for index, name in enumerate(self.PAGE_NAMES):
             if index in section_starts:
@@ -470,10 +470,9 @@ class MainWindow(QMainWindow):
             self.navigation_group.addButton(button, index)
             self.navigation_buttons.append(button)
             navigation_layout.addWidget(button)
-            if index == self.RECORDS_TAB:
-                # Keep the advanced query page composed for compatibility and
-                # direct workflows, but use Production Runs as the single
-                # operator-facing entry point for scan records.
+            if index in (self.RECORDS_TAB, self.IMPORT_TAB, self.BOMS_TAB):
+                # Keep compatibility pages composed for historical data and
+                # direct signal routing, but expose one concise operator path.
                 button.setHidden(True)
         navigation_layout.addStretch(1)
         self.operator_widget = operator_widget
@@ -519,13 +518,17 @@ class MainWindow(QMainWindow):
         self.reset_layout_button.setToolTip("清除已保存的列宽、列顺序和左右分栏比例")
         self.reset_layout_button.clicked.connect(self._reset_layouts)
         diagnostic_layout.addWidget(self.reset_layout_button)
-        content_layout.addWidget(self.diagnostic_frame)
+        # Normal diagnostics no longer consume vertical space on every page.
+        # Low-frequency layout reset lives with audit/settings under “更多”.
+        self.diagnostic_frame.hide()
+        audit_layout = audit_widget.layout()
+        if audit_layout is not None:
+            self.reset_layout_button.setText("重置表格列宽和分栏")
+            audit_layout.addWidget(self.reset_layout_button)
         body.addWidget(content, 1)
         central_layout.addLayout(body, 1)
         self.setCentralWidget(central)
-        scan_widget.configuration_combo.currentTextChanged.connect(
-            self._update_diagnostics
-        )
+        scan_widget.configuration_combo.currentTextChanged.connect(self._update_diagnostics)
         scan_widget.run_changed.connect(self._update_diagnostics)
         self._update_diagnostics()
         self._prepare_table_viewports()
@@ -556,7 +559,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _reset_layouts(self) -> None:
         reset_persistent_layouts(self, self._layout_store)
-        self.diagnostic_label.setText("● 已恢复当前屏幕的默认表格与分栏布局")
+        self.diagnostic_label.setText("● 已重置表格列宽和分栏")
 
     @Slot(int)
     def _tab_changed(self, index: int) -> None:

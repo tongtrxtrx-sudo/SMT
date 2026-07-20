@@ -9,16 +9,17 @@ configuration.
 - Configure devices and physical stations.
 - Restore the last confirmed operator at startup and attribute all subsequent changes, imports,
   production runs, and audits to that operator until an explicit switch.
-- Follow a guided BOM -> station table -> validation and activation import flow.
-- Scan device, station, and material codes in a controlled sequence.
+- Import and activate a product configuration directly from one station/material workbook.
+- Enforce globally unique station codes and scan station then material; the owning device is
+  resolved automatically while remaining available in records and exports.
 - Compare material codes exactly while preserving leading zeroes.
 - Show clear OK or NG feedback and production progress.
 - Persist device/station lifecycle, versioned BOMs, product configurations, production runs,
   station progress, append-only verification attempts, and critical-change audit logs in SQLite.
 - Review and export run records as UTF-8 CSV.
-- Manage versioned BOMs and product configurations through draft, release, activation, disable/
-  obsolete, and archive lifecycles.
-- Query production-run snapshots and station progress, resume interrupted runs, and filter the
+- Keep historical BOM rows readable for compatibility while excluding BOM management from the
+  normal operator workflow.
+- Query job snapshots and station progress, resume interrupted jobs, and filter the
   append-only audit log.
 
 Learning mode, fuzzy material matching, brand substitution, networking, PLC integration, and
@@ -67,58 +68,53 @@ split-pane proportions are stored in `ui_layout.json` so the next launch restore
 
 The database is upgraded by ordered, checksummed forward migrations recorded in
 `schema_migrations`; startup rejects unknown future versions or modified migration history.
-Released BOM and configuration versions are immutable, while changes are created as new versions.
+Released configuration versions are immutable, while changes are created as new versions. Legacy
+BOM data remains readable but is no longer required by normal imports or scanning.
 Only active configurations whose current devices and stations remain enabled are offered to the
 scan page. Production-run headers and configuration snapshots are written before the first scan,
 so zero-scan and interrupted runs remain queryable and recoverable through the repository layer.
 
-The desktop UI exposes eight focused pages grouped as work, configuration, and system tasks, with
-scanning as the first page. After confirmation, the shared operator editor collapses to the current
-identity and a deliberate switch action. The confirmed identity is restored from the application
-data directory on the next startup. Write actions are rejected until a non-empty operator identifier
-is confirmed.
+The everyday navigation exposes `扫码作业`, `作业记录`, `设备与站位`, `产品配置`, and `更多`, with
+scanning as the first page. After confirmation, the compact lower-left operator control shows the
+current identity and a deliberate switch action. The confirmed identity is restored from the
+application data directory on the next startup. Write actions are rejected until a non-empty
+operator identifier is confirmed.
 
 ## Product lifecycle workflow
 
-1. Confirm the current operator in the bar above the page tabs.
+1. Confirm or switch the current operator in the lower-left sidebar control.
 2. Use **设备与站位** to search, edit, enable, disable, delete unreferenced master data, or archive
    referenced data. Archived state is displayed separately from ordinary disabled state.
-3. Import a BOM. For a changed BOM whose previous version already exists, fill **BOM 新版本** so
-   the change is stored as another draft instead of modifying released details in place.
-4. Use **配置 · BOM** to compare compact version summaries, then inspect materials and provenance
-   (source filename, SHA-256, import time, and operator) in the detail pane. The three-step import
-   flow marks the linked BOM as the current version automatically; production availability is
-   controlled by the product configuration instead of separate BOM enable/disable buttons.
-5. Use **产品配置** to copy a released configuration into a new draft, add/remove/edit station
-   assignments, validate it, and publish/activate/disable/archive it. Released assignment details
-   are immutable. The scan page lists only active, non-empty configurations whose referenced
-   devices and stations are still enabled.
-6. Start work on **作业 · 扫码**. A run header and configuration snapshot are persisted before the
+3. In **产品配置**, choose **导入新配置**, enter the product code and configuration version, select
+   a two-column station/material workbook, and choose **导入并使用**. The owning device is resolved
+   from each globally unique station code and the validated configuration is activated immediately.
+4. Use **产品配置** to copy an active configuration into a new draft, add/remove/edit station and
+   material assignments, then **保存并校验** before activation. Active assignment details are
+   immutable. The scan page lists only active, non-empty configurations whose referenced devices
+   and stations are still enabled.
+5. Start work on **扫码作业**. A job header and configuration snapshot are persisted before the
    first scan. The page keeps one large current-step prompt visible, accepts scanner Enter directly,
-   reports scanner focus, and keeps recent history collapsed. Starting another run, changing
-   operator, or closing the application interrupts an unfinished run. **作业 · 生产运行** can filter
-   runs in a compact six-column list, show full time/interruption details beside it, display the last
-   query time, inspect station progress and scan records, export the selected run as CSV, and return
-   an interrupted run to scanning for recovery. A run completes automatically after the final
+   reports scanner focus, and shows recent history by default. Starting another job, changing
+   operator, or closing the application interrupts an unfinished job. **作业记录** can filter jobs
+   in a compact five-column list, show full time/interruption details beside it, inspect station
+   progress and scan records, export the selected job as CSV, and return an interrupted job to
+   scanning for recovery. A job completes automatically after the final
    required station receives an OK verification.
-7. Use **系统 · 审计日志** to filter immutable history by entity type/key, operator, action, and a
+6. Use **更多 · 审计日志** to filter immutable history by entity type/key, operator, action, and a
    calendar date-time range. **今天**, **近 7 天**, and **近 30 天** apply common ranges directly.
    Scan attempts and audit entries cannot be edited or deleted.
 
 ## Import workflow
 
 1. Create and enable the required devices and stations on the master-data page.
-2. On **配置 · 导入配置**, complete step 1 by selecting and importing a BOM. The page shows the
-   product, BOM version, and material count, then advances to step 2 automatically.
-3. Select the station table, enter its worksheet name and product version, and review the parsed
-   station count.
-4. In step 3, verify the combined summary and choose **校验并启用**. Validation errors remain on the
-   page so they can be corrected without losing the current workflow context.
+2. On **产品配置**, choose **导入新配置**, fill in `产品编码` and `配置版本`, and select the worksheet.
+3. Import an Excel sheet whose required columns are `站位编码` and `物料编码`, then choose
+   **导入并使用**. Validation feedback stays on the same page.
 
-After restarting the application, import the BOM again before importing another station table.
-The supplied template is `templates\站位表导入模板.xlsx`. Its `Worksheet` sheet uses the required
-columns `设备编码`, `站位编码`, and `物料编码`; replace or delete the example row before use and keep
-all codes as text to preserve leading zeroes.
+Use **下载模板** on the import page or the supplied `templates\站位表导入模板.xlsx`. Replace or
+delete the example row and keep all codes as text to preserve leading zeroes. Existing three-column
+files containing `设备编码` remain supported; when supplied, the device must match the station's
+actual owner.
 
 ## Windows build
 
