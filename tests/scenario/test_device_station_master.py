@@ -26,21 +26,13 @@ class DeviceStationMasterTests(unittest.TestCase):
         with self.assertRaises(DuplicateCodeError):
             self.service.add_device("SMT-01", "Duplicate", "Line B")
 
-    def test_station_code_is_unique_within_device(self) -> None:
+    def test_station_code_is_globally_unique(self) -> None:
         self.service.add_device("SMT-01", "Placement machine 1", "Line A")
+        self.service.add_device("SMT-02", "Placement machine 2", "Line A")
         self.service.add_station("SMT-01", "F-01")
 
         with self.assertRaises(DuplicateCodeError):
-            self.service.add_station("SMT-01", "F-01")
-
-    def test_same_station_code_is_allowed_on_another_device(self) -> None:
-        self.service.add_device("SMT-01", "Placement machine 1", "Line A")
-        self.service.add_device("SMT-02", "Placement machine 2", "Line A")
-
-        self.service.add_station("SMT-01", "F-01")
-        self.service.add_station("SMT-02", "F-01")
-
-        self.assertEqual("F-01", self.service.get_station("SMT-02", "F-01").code)
+            self.service.add_station("SMT-02", "F-01")
 
     def test_referenced_station_can_be_disabled_but_not_deleted(self) -> None:
         self.service.add_device("SMT-01", "Placement machine 1", "Line A")

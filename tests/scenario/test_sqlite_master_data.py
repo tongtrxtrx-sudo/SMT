@@ -24,12 +24,13 @@ class SqliteMasterDataTests(unittest.TestCase):
 
     def test_rejects_duplicate_codes(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")
+        self.repository.add_device("SMT-02", "Machine 2", "Line A")
         self.repository.add_station("SMT-01", "F-01")
 
         with self.assertRaises(DuplicateCodeError):
             self.repository.add_device("SMT-01", "Duplicate", "Line B")
         with self.assertRaises(DuplicateCodeError):
-            self.repository.add_station("SMT-01", "F-01")
+            self.repository.add_station("SMT-02", "F-01")
 
     def test_bulk_station_creation_is_atomic(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")
@@ -39,6 +40,24 @@ class SqliteMasterDataTests(unittest.TestCase):
             self.repository.bulk_add_stations("SMT-01", "F-", 1, 3, width=2)
 
         self.assertEqual(["F-02"], [item.code for item in self.repository.list_stations("SMT-01")])
+
+    def test_lists_and_searches_station_codes_in_natural_numeric_order(self) -> None:
+        self.repository.add_device("SMT-01", "Machine 1", "Line A")
+        for code in ("F-20", "F-3", "F-11", "F-2", "F-1", "R-2-A", "R-10-A"):
+            self.repository.add_station("SMT-01", code)
+
+        expected = ["F-1", "F-2", "F-3", "F-11", "F-20", "R-2-A", "R-10-A"]
+        self.assertEqual(
+            expected,
+            [station.code for station in self.repository.list_stations("SMT-01")],
+        )
+        self.assertEqual(
+            expected[:5],
+            [
+                station.code
+                for station in self.repository.search_stations("SMT-01", "F-")
+            ],
+        )
 
     def test_persists_lifecycle_state_and_protects_referenced_station(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")

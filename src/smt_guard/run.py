@@ -1,14 +1,14 @@
 """Application service for one material-verification run."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
 from typing import Protocol
 
 from smt_guard.feedback import AudioSink, FeedbackController, FeedbackState
 from smt_guard.records import Attempt
-from smt_guard.scan import ProductConfiguration, ScanOutcome, ScanSession
+from smt_guard.scan import ProductConfiguration, ScanOutcome, ScanSession, ScanStep
 from smt_guard.verification import VerificationResult
 
 
@@ -33,6 +33,7 @@ class ProductionRun:
     """Persisted run header, configuration snapshot, and progress summary."""
 
     run_id: str
+    job_number: str
     configuration: ProductConfiguration
     operator: str
     status: RunStatus
@@ -111,6 +112,7 @@ class VerificationRun:
         completed_stations: set[tuple[str, str]] | None = None,
     ) -> None:
         self.run_id = run_id.strip()
+        self.job_number = self.run_id
         self.configuration = configuration
         self._attempts = attempts
         self._clock = clock
@@ -126,12 +128,13 @@ class VerificationRun:
             completed_stations=len(self._completed),
         )
         if self._runs is not None and start_persisted_run:
-            self._runs.start(
+            persisted = self._runs.start(
                 self.run_id,
                 configuration,
                 operator=self._operator,
                 started_at=self._clock(),
             )
+            self.job_number = persisted.job_number
 
     @classmethod
     def resume(
@@ -148,7 +151,7 @@ class VerificationRun:
         """Rehydrate an already-persisted running snapshot without creating a new run."""
         if persisted.status is not RunStatus.RUNNING:
             raise ValueError(f"Production run is not running: {persisted.run_id}")
-        return cls(
+        service = cls(
             persisted.run_id,
             persisted.configuration,
             attempts,
@@ -159,11 +162,18 @@ class VerificationRun:
             start_persisted_run=False,
             completed_stations=completed_stations,
         )
+        service.job_number = persisted.job_number
+        return service
 
     @property
     def initial_feedback(self) -> FeedbackState:
         """Return the first operator prompt for a new run."""
         return self._feedback.waiting(self._session.current_step)
+
+    @property
+    def current_step(self) -> ScanStep:
+        """Expose the current safe scanner step to presentation adapters."""
+        return self._session.current_step
 
     @property
     def completed(self) -> bool:
@@ -176,7 +186,16 @@ class VerificationRun:
         station = self._session.current_station
         outcome = self._session.handle_scan(raw_code)
         if not outcome.accepted or outcome.verification is None:
-            return RunUpdate(outcome, self._feedback.waiting(outcome.next_step))
+            feedback = self._feedback.waiting(outcome.next_step)
+            if outcome.accepted and outcome.next_step is ScanStep.MATERIAL:
+                feedback = replace(
+                    feedback,
+                    message=(
+                        f"当前站位 {self._session.current_station} · "
+                        f"所属设备 {self._session.current_device}\n请扫描物料码"
+                    ),
+                )
+            return RunUpdate(outcome, feedback)
 
         if device is None or station is None:
             raise RuntimeError("Material verification completed without device and station")
@@ -217,6 +236,11 @@ class VerificationRun:
             station_newly_completed=newly_completed,
         )
         return RunUpdate(outcome, feedback, attempt)
+
+    def reset_station_selection(self) -> FeedbackState:
+        """Let the operator correct a station before scanning a material."""
+        self._session.reset_station()
+        return self._feedback.waiting(ScanStep.STATION)
 
     def interrupt(self, reason: str) -> None:
         """Persist an interrupted run, including runs with no scan attempts."""

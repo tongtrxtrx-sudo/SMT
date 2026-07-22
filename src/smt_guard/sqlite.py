@@ -14,10 +14,10 @@ from smt_guard.configuration import ConfigurationStatus, ProductConfigurationRec
 from smt_guard.master_data import (
     Device,
     DuplicateCodeError,
-    MasterDataError,
     ReferencedEntityError,
     Station,
     UnknownEntityError,
+    natural_code_key,
     normalize_code,
 )
 from smt_guard.migrations import MIGRATIONS, Migration
@@ -316,7 +316,21 @@ class SqliteMasterDataRepository:
     def enable_device(self, code: str, *, actor: str = "SYSTEM") -> None:
         device = self.get_device(code)
         if device.archived:
-            raise MasterDataError(f"Archived device cannot be enabled: {device.code}")
+            with self._connection:
+                self._connection.execute(
+                    "UPDATE devices SET enabled = 1, archived = 0, updated_at = ? WHERE code = ?",
+                    (_iso(_utc_now()), device.code),
+                )
+                _write_audit(
+                    self._connection,
+                    actor=actor,
+                    action="ENABLE",
+                    entity_type="DEVICE",
+                    entity_key=device.code,
+                    before={"enabled": device.enabled, "archived": True},
+                    after={"enabled": True, "archived": False},
+                )
+            return
         self._set_device_enabled(code, True, actor)
 
     def _set_device_enabled(self, code: str, enabled: bool, actor: str) -> None:
@@ -449,9 +463,7 @@ class SqliteMasterDataRepository:
                     after=asdict(station),
                 )
         except sqlite3.IntegrityError as error:
-            raise DuplicateCodeError(
-                f"Duplicate station code: {station.device_code}/{station.code}"
-            ) from error
+            raise DuplicateCodeError(f"Duplicate station code: {station.code}") from error
         return station
 
     def bulk_add_stations(
@@ -466,8 +478,7 @@ class SqliteMasterDataRepository:
     ) -> list[Station]:
         device = self.get_device(device_code)
         stations = [
-            Station(device.code, f"{prefix}{number:0{width}d}")
-            for number in range(start, end + 1)
+            Station(device.code, f"{prefix}{number:0{width}d}") for number in range(start, end + 1)
         ]
         try:
             with self._connection:
@@ -483,16 +494,10 @@ class SqliteMasterDataRepository:
                     )
         except sqlite3.IntegrityError as error:
             duplicate = next(
-                (
-                    item.code
-                    for item in stations
-                    if self._station_exists(item.device_code, item.code)
-                ),
+                (item.code for item in stations if self._station_exists(item.code)),
                 stations[0].code,
             )
-            raise DuplicateCodeError(
-                f"Duplicate station code: {device.code}/{duplicate}"
-            ) from error
+            raise DuplicateCodeError(f"Duplicate station code: {duplicate}") from error
         return stations
 
     def get_station(self, device_code: str, station_code: str) -> Station:
@@ -509,17 +514,32 @@ class SqliteMasterDataRepository:
             str(row[0]), str(row[1]), bool(row[2]), bool(row[3]), str(row[4]), bool(row[5])
         )
 
+    def resolve_station(self, station_code: str) -> Station:
+        """Resolve a station by its globally unique code."""
+        normalized = normalize_code(station_code)
+        row = self._connection.execute(
+            "SELECT device_code, code, enabled, referenced, name, archived "
+            "FROM stations WHERE code = ?",
+            (normalized,),
+        ).fetchone()
+        if row is None:
+            raise UnknownEntityError(f"Unknown station: {normalized}")
+        return Station(
+            str(row[0]), str(row[1]), bool(row[2]), bool(row[3]), str(row[4]), bool(row[5])
+        )
+
     def list_stations(self, device_code: str) -> list[Station]:
         device = self.get_device(device_code)
         rows = self._connection.execute(
             "SELECT device_code, code, enabled, referenced, name, archived "
-            "FROM stations WHERE device_code = ? ORDER BY code",
+            "FROM stations WHERE device_code = ?",
             (device.code,),
         )
-        return [
+        stations = [
             Station(str(r[0]), str(r[1]), bool(r[2]), bool(r[3]), str(r[4]), bool(r[5]))
             for r in rows
         ]
+        return sorted(stations, key=lambda station: natural_code_key(station.code))
 
     def search_stations(
         self,
@@ -536,7 +556,7 @@ class SqliteMasterDataRepository:
             "SELECT device_code, code, enabled, referenced, name, archived FROM stations "
             "WHERE device_code = ? AND (? = '%%' OR code LIKE ? OR name LIKE ?) "
             "AND (? IS NULL OR enabled = ?) "
-            "AND (? = 1 OR archived = 0) ORDER BY code",
+            "AND (? = 1 OR archived = 0)",
             (
                 device.code,
                 pattern,
@@ -547,10 +567,11 @@ class SqliteMasterDataRepository:
                 int(include_archived),
             ),
         )
-        return [
+        stations = [
             Station(str(r[0]), str(r[1]), bool(r[2]), bool(r[3]), str(r[4]), bool(r[5]))
             for r in rows
         ]
+        return sorted(stations, key=lambda station: natural_code_key(station.code))
 
     def update_station(
         self,
@@ -564,8 +585,7 @@ class SqliteMasterDataRepository:
         after = replace(before, name=name.strip())
         with self._connection:
             self._connection.execute(
-                "UPDATE stations SET name = ?, updated_at = ? "
-                "WHERE device_code = ? AND code = ?",
+                "UPDATE stations SET name = ?, updated_at = ? WHERE device_code = ? AND code = ?",
                 (after.name, _iso(_utc_now()), before.device_code, before.code),
             )
             _write_audit(
@@ -595,14 +615,25 @@ class SqliteMasterDataRepository:
     ) -> None:
         self._set_station_enabled(device_code, station_code, False, actor)
 
-    def enable_station(
-        self, device_code: str, station_code: str, *, actor: str = "SYSTEM"
-    ) -> None:
+    def enable_station(self, device_code: str, station_code: str, *, actor: str = "SYSTEM") -> None:
         station = self.get_station(device_code, station_code)
         if station.archived:
-            raise MasterDataError(
-                f"Archived station cannot be enabled: {station.device_code}/{station.code}"
-            )
+            with self._connection:
+                self._connection.execute(
+                    "UPDATE stations SET enabled = 1, archived = 0, updated_at = ? "
+                    "WHERE device_code = ? AND code = ?",
+                    (_iso(_utc_now()), station.device_code, station.code),
+                )
+                _write_audit(
+                    self._connection,
+                    actor=actor,
+                    action="ENABLE",
+                    entity_type="STATION",
+                    entity_key=f"{station.device_code}/{station.code}",
+                    before={"enabled": station.enabled, "archived": True},
+                    after={"enabled": True, "archived": False},
+                )
+            return
         self._set_station_enabled(device_code, station_code, True, actor)
 
     def _set_station_enabled(
@@ -653,16 +684,18 @@ class SqliteMasterDataRepository:
                 after={"enabled": False, "archived": True},
             )
 
-    def delete_station(
-        self, device_code: str, station_code: str, *, actor: str = "SYSTEM"
-    ) -> None:
+    def delete_station(self, device_code: str, station_code: str, *, actor: str = "SYSTEM") -> None:
         station = self.get_station(device_code, station_code)
-        referenced = station.referenced or self._connection.execute(
-            "SELECT 1 FROM station_assignments WHERE device_code = ? AND station_code = ? "
-            "UNION ALL SELECT 1 FROM run_station_states "
-            "WHERE device_code = ? AND station_code = ? LIMIT 1",
-            (station.device_code, station.code, station.device_code, station.code),
-        ).fetchone() is not None
+        referenced = (
+            station.referenced
+            or self._connection.execute(
+                "SELECT 1 FROM station_assignments WHERE device_code = ? AND station_code = ? "
+                "UNION ALL SELECT 1 FROM run_station_states "
+                "WHERE device_code = ? AND station_code = ? LIMIT 1",
+                (station.device_code, station.code, station.device_code, station.code),
+            ).fetchone()
+            is not None
+        )
         if referenced:
             raise ReferencedEntityError(
                 f"Referenced station cannot be deleted: {station.device_code}/{station.code}"
@@ -699,11 +732,14 @@ class SqliteMasterDataRepository:
             ),
         )
 
-    def _station_exists(self, device_code: str, station_code: str) -> bool:
-        return self._connection.execute(
-            "SELECT 1 FROM stations WHERE device_code = ? AND code = ?",
-            (device_code, station_code),
-        ).fetchone() is not None
+    def _station_exists(self, station_code: str) -> bool:
+        return (
+            self._connection.execute(
+                "SELECT 1 FROM stations WHERE code = ?",
+                (station_code,),
+            ).fetchone()
+            is not None
+        )
 
 
 class SqliteBomRepository:
@@ -836,16 +872,16 @@ class SqliteBomRepository:
             )
         return [self.get_by_id(int(row[0])) for row in rows]
 
-    def publish(
-        self, product_code: str, version: str, *, actor: str = "SYSTEM"
-    ) -> BomVersion:
+    def publish(self, product_code: str, version: str, *, actor: str = "SYSTEM") -> BomVersion:
         return self._transition(product_code, version, BomStatus.DRAFT, BomStatus.PUBLISHED, actor)
 
-    def activate(
-        self, product_code: str, version: str, *, actor: str = "SYSTEM"
-    ) -> BomVersion:
+    def activate(self, product_code: str, version: str, *, actor: str = "SYSTEM") -> BomVersion:
         current = self.get(product_code, version)
-        if current.status not in {BomStatus.PUBLISHED, BomStatus.OBSOLETE}:
+        if current.status not in {
+            BomStatus.PUBLISHED,
+            BomStatus.OBSOLETE,
+            BomStatus.ARCHIVED,
+        }:
             raise InvalidLifecycleTransition(
                 f"BOM must be published before activation: {product_code}/{version}"
             )
@@ -885,17 +921,13 @@ class SqliteBomRepository:
             )
         return self.get_by_id(current.id)
 
-    def obsolete(
-        self, product_code: str, version: str, *, actor: str = "SYSTEM"
-    ) -> BomVersion:
+    def obsolete(self, product_code: str, version: str, *, actor: str = "SYSTEM") -> BomVersion:
         current = self.get(product_code, version)
         if current.status not in {BomStatus.PUBLISHED, BomStatus.ACTIVE}:
             raise InvalidLifecycleTransition(f"BOM cannot be obsoleted from {current.status.value}")
         return self._transition_any(current, BomStatus.OBSOLETE, actor)
 
-    def archive(
-        self, product_code: str, version: str, *, actor: str = "SYSTEM"
-    ) -> BomVersion:
+    def archive(self, product_code: str, version: str, *, actor: str = "SYSTEM") -> BomVersion:
         current = self.get(product_code, version)
         if current.status is BomStatus.ACTIVE:
             raise InvalidLifecycleTransition("Active BOM must be obsoleted before archival")
@@ -906,9 +938,7 @@ class SqliteBomRepository:
         second = self.get_by_id(second_id).document.materials
         first_codes = set(first)
         second_codes = set(second)
-        changed = sorted(
-            code for code in first_codes & second_codes if first[code] != second[code]
-        )
+        changed = sorted(code for code in first_codes & second_codes if first[code] != second[code])
         return {
             "added": sorted(second_codes - first_codes),
             "removed": sorted(first_codes - second_codes),
@@ -930,9 +960,7 @@ class SqliteBomRepository:
             )
         return self._transition_any(current, target, actor)
 
-    def _transition_any(
-        self, current: BomVersion, target: BomStatus, actor: str
-    ) -> BomVersion:
+    def _transition_any(self, current: BomVersion, target: BomStatus, actor: str) -> BomVersion:
         published_at = _iso(_utc_now()) if target is BomStatus.PUBLISHED else None
         with self._connection:
             self._connection.execute(
@@ -945,9 +973,7 @@ class SqliteBomRepository:
                 actor=actor,
                 action=target.value,
                 entity_type="BOM",
-                entity_key=(
-                    f"{current.document.product.material_code}/{current.version}"
-                ),
+                entity_key=(f"{current.document.product.material_code}/{current.version}"),
                 before={"status": current.status.value},
                 after={"status": target.value},
             )
@@ -1023,9 +1049,7 @@ class SqliteProductConfigurationRepository:
                 ) from error
             raise
 
-    def create_draft(
-        self, configuration: ProductConfiguration, *, actor: str = "SYSTEM"
-    ) -> None:
+    def create_draft(self, configuration: ProductConfiguration, *, actor: str = "SYSTEM") -> None:
         self.save(configuration, actor=actor, activate=False)
 
     def update_draft(
@@ -1200,7 +1224,11 @@ class SqliteProductConfigurationRepository:
         return self._transition(
             product_code,
             version,
-            {ConfigurationStatus.PUBLISHED, ConfigurationStatus.DISABLED},
+            {
+                ConfigurationStatus.PUBLISHED,
+                ConfigurationStatus.DISABLED,
+                ConfigurationStatus.ARCHIVED,
+            },
             ConfigurationStatus.ACTIVE,
             actor,
         )
@@ -1314,10 +1342,13 @@ class SqliteProductConfigurationRepository:
         return self.get_record(product_code, version)
 
     def _exists(self, product_code: str, version: str) -> bool:
-        return self._connection.execute(
-            "SELECT 1 FROM product_configurations WHERE product_code = ? AND version = ?",
-            (product_code, version),
-        ).fetchone() is not None
+        return (
+            self._connection.execute(
+                "SELECT 1 FROM product_configurations WHERE product_code = ? AND version = ?",
+                (product_code, version),
+            ).fetchone()
+            is not None
+        )
 
 
 class SqliteAttemptRepository:
@@ -1408,12 +1439,15 @@ class SqliteProductionRunRepository(SqliteAttemptRepository):
         }
         try:
             with self._connection:
+                job_number = self._next_job_number(started_at)
                 self._connection.execute(
                     "INSERT INTO production_runs "
-                    "(run_id, product_code, product_version, configuration_snapshot, operator, "
-                    "status, started_at) VALUES (?, ?, ?, ?, ?, 'RUNNING', ?)",
+                    "(run_id, job_number, product_code, product_version, "
+                    "configuration_snapshot, operator, status, started_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 'RUNNING', ?)",
                     (
                         normalized_run_id,
+                        job_number,
                         configuration.product_code,
                         configuration.version,
                         _json(snapshot),
@@ -1435,6 +1469,7 @@ class SqliteProductionRunRepository(SqliteAttemptRepository):
                     entity_type="PRODUCTION_RUN",
                     entity_key=normalized_run_id,
                     after={
+                        "job_number": job_number,
                         "product_code": configuration.product_code,
                         "product_version": configuration.version,
                         "station_count": len(configuration.assignments),
@@ -1447,6 +1482,18 @@ class SqliteProductionRunRepository(SqliteAttemptRepository):
             ) from error
         return self.get(normalized_run_id)
 
+    def _next_job_number(self, started_at: datetime) -> str:
+        """Allocate the next stable, operator-facing number for one work date."""
+        prefix = started_at.strftime("%y%m%d")
+        row = self._connection.execute(
+            "INSERT INTO job_number_sequences (work_date, last_value) VALUES (?, 1) "
+            "ON CONFLICT(work_date) DO UPDATE SET last_value = last_value + 1 "
+            "RETURNING last_value",
+            (started_at.strftime("%Y-%m-%d"),),
+        ).fetchone()
+        sequence = int(row[0])
+        return f"{prefix}-{sequence:03d}"
+
     def record_attempt(self, attempt: Attempt) -> Attempt:
         with self._connection:
             row = self._connection.execute(
@@ -1457,9 +1504,7 @@ class SqliteProductionRunRepository(SqliteAttemptRepository):
             if row is None:
                 raise UnknownRunError(f"Unknown production run: {attempt.run_id}")
             if str(row[0]) != RunStatus.RUNNING.value:
-                raise InvalidLifecycleTransition(
-                    f"Production run is not active: {attempt.run_id}"
-                )
+                raise InvalidLifecycleTransition(f"Production run is not active: {attempt.run_id}")
             if (str(row[1]), str(row[2])) != (
                 attempt.product_code,
                 attempt.product_version,
@@ -1512,14 +1557,15 @@ class SqliteProductionRunRepository(SqliteAttemptRepository):
 
     def get(self, run_id: str) -> ProductionRun:
         row = self._connection.execute(
-            "SELECT run_id, product_code, product_version, configuration_snapshot, operator, "
+            "SELECT run_id, job_number, product_code, product_version, "
+            "configuration_snapshot, operator, "
             "status, started_at, completed_at, interrupted_at, interruption_reason "
             "FROM production_runs WHERE run_id = ?",
             (normalize_code(run_id),),
         ).fetchone()
         if row is None:
             raise UnknownRunError(f"Unknown production run: {run_id}")
-        decoded_snapshot: object = json.loads(str(row[3]))
+        decoded_snapshot: object = json.loads(str(row[4]))
         if not isinstance(decoded_snapshot, dict):
             raise RuntimeError("Invalid production run configuration snapshot")
         snapshot = cast(dict[str, object], decoded_snapshot)
@@ -1536,8 +1582,8 @@ class SqliteProductionRunRepository(SqliteAttemptRepository):
             )
         raw_bom_version_id = snapshot.get("bom_version_id")
         configuration = ProductConfiguration(
-            str(row[1]),
             str(row[2]),
+            str(row[3]),
             assignments,
             None if raw_bom_version_id is None else int(str(raw_bom_version_id)),
         )
@@ -1548,15 +1594,16 @@ class SqliteProductionRunRepository(SqliteAttemptRepository):
         ).fetchone()
         return ProductionRun(
             run_id=str(row[0]),
+            job_number=str(row[1]),
             configuration=configuration,
-            operator=str(row[4]),
-            status=RunStatus(str(row[5])),
-            started_at=_parse_datetime(row[6]),
+            operator=str(row[5]),
+            status=RunStatus(str(row[6])),
+            started_at=_parse_datetime(row[7]),
             completed_stations=int(progress[0] or 0),
             total_stations=int(progress[1]),
-            completed_at=None if row[7] is None else _parse_datetime(row[7]),
-            interrupted_at=None if row[8] is None else _parse_datetime(row[8]),
-            interruption_reason=str(row[9]),
+            completed_at=None if row[8] is None else _parse_datetime(row[8]),
+            interrupted_at=None if row[9] is None else _parse_datetime(row[9]),
+            interruption_reason=str(row[10]),
         )
 
     def list_runs(self, status: RunStatus | None = None) -> list[ProductionRun]:
@@ -1585,13 +1632,15 @@ class SqliteProductionRunRepository(SqliteAttemptRepository):
         operator_pattern = f"%{operator.strip()}%"
         rows = self._connection.execute(
             "SELECT run_id FROM production_runs "
-            "WHERE (? = '%%' OR run_id LIKE ? OR product_code LIKE ? OR product_version LIKE ?) "
+            "WHERE (? = '%%' OR run_id LIKE ? OR job_number LIKE ? "
+            "OR product_code LIKE ? OR product_version LIKE ?) "
             "AND (? = '%%' OR operator LIKE ?) "
             "AND (? IS NULL OR status = ?) "
             "AND (? IS NULL OR started_at >= ?) "
             "AND (? IS NULL OR started_at <= ?) "
             "ORDER BY started_at DESC, run_id DESC",
             (
+                pattern,
                 pattern,
                 pattern,
                 pattern,
@@ -1665,9 +1714,7 @@ class SqliteProductionRunRepository(SqliteAttemptRepository):
                 timestamp=interrupted_at,
             )
 
-    def resume(
-        self, run_id: str, *, operator: str, resumed_at: datetime
-    ) -> ProductionRun:
+    def resume(self, run_id: str, *, operator: str, resumed_at: datetime) -> ProductionRun:
         current = self.get(run_id)
         if current.status is not RunStatus.INTERRUPTED:
             raise InvalidLifecycleTransition(f"Production run is not interrupted: {run_id}")

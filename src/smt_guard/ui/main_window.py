@@ -3,22 +3,35 @@
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Slot
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
-from PySide6.QtWidgets import QMainWindow, QTableWidget, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtCore import QDateTime, QTimer, Slot
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette, QResizeEvent
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QSizePolicy,
+    QStackedWidget,
+    QTableWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from smt_guard.ui.operator import OperatorSessionWidget
 from smt_guard.ui.scanning import ScanWidget
+from smt_guard.ui.tables import UiLayoutStore, reset_persistent_layouts
 
 APPLICATION_STYLE = """
 QWidget {
     font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI";
     font-size: 14px;
     color: #1d2939;
-    background-color: #f8fafc;
+    background-color: #f4f7fb;
 }
-QMainWindow, QTabWidget, QTabWidget::pane, QTabBar {
-    background-color: #f8fafc;
+QMainWindow, QStackedWidget, QTabWidget, QTabWidget::pane, QTabBar {
+    background-color: #f4f7fb;
 }
 QTabBar::tab {
     background-color: #eaecf0;
@@ -30,83 +43,313 @@ QTabBar::tab:selected {
     color: #175cd3;
 }
 QGroupBox {
-    border: 1px solid #d0d5dd;
-    border-radius: 6px;
-    margin-top: 12px;
-    padding-top: 8px;
+    border: 1px solid #dbe4f0;
+    border-radius: 12px;
+    margin-top: 16px;
+    padding-top: 12px;
     background-color: #ffffff;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 5px;
+    left: 14px;
+    padding: 0 7px;
+    color: #344054;
+    font-weight: 700;
 }
-QLineEdit, QSpinBox, QComboBox, QTableWidget {
+QLineEdit, QSpinBox, QComboBox, QDateTimeEdit, QTableWidget {
     background-color: #ffffff;
     color: #1d2939;
-    border: 1px solid #98a2b3;
-    border-radius: 4px;
-    padding: 5px;
+    border: 1px solid #c7d2e0;
+    border-radius: 7px;
+    padding: 7px;
     selection-background-color: #d1e9ff;
     selection-color: #102a56;
+}
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus {
+    border: 2px solid #2e90fa;
+    background-color: #ffffff;
+}
+QSpinBox {
+    padding-right: 84px;
+}
+QToolButton#spinIncrement, QToolButton#spinDecrement {
+    color: #175cd3;
+    background-color: #f0f5fb;
+    border: 1px solid #c7d2e0;
+    border-radius: 4px;
+    font-size: 17px;
+    font-weight: 700;
+    font-family: "Microsoft YaHei UI";
+    padding: 0;
+}
+QToolButton#spinIncrement:hover, QToolButton#spinDecrement:hover {
+    background-color: #dcecff;
+}
+QToolButton#spinIncrement:pressed, QToolButton#spinDecrement:pressed {
+    background-color: #b2ddff;
 }
 QAbstractItemView {
     background-color: #ffffff;
     color: #1d2939;
 }
 QTableWidget {
-    gridline-color: #d0d5dd;
-    alternate-background-color: #f9fafb;
+    gridline-color: #e4e7ec;
+    alternate-background-color: #f7f9fc;
+    border: 1px solid #dbe4f0;
+    border-radius: 8px;
+    padding: 0;
 }
 QTableWidget::item {
     background-color: #ffffff;
     color: #1d2939;
+    padding: 6px 8px;
+    border-bottom: 1px solid #eef2f6;
 }
+QTableWidget::item:alternate { background-color: #f7f9fc; }
 QTableWidget::item:selected {
-    background-color: #d1e9ff;
+    background-color: #dcecff;
     color: #102a56;
 }
 QHeaderView::section, QTableCornerButton::section {
-    background-color: #eaecf0;
+    background-color: #eef3f8;
     color: #344054;
-    border: 1px solid #d0d5dd;
-    padding: 6px;
-    font-weight: 600;
+    border: 0;
+    border-right: 1px solid #dbe4f0;
+    border-bottom: 1px solid #dbe4f0;
+    padding: 8px;
+    font-weight: 700;
 }
 QPushButton {
-    background-color: #175cd3;
-    color: #ffffff;
-    border: none;
-    border-radius: 4px;
-    padding: 7px 14px;
+    background-color: #ffffff;
+    color: #344054;
+    border: 1px solid #aebdce;
+    border-radius: 7px;
+    min-height: 34px;
+    padding: 6px 15px;
+    font-weight: 600;
 }
 QPushButton:hover {
+    background-color: #f0f5fb;
+    border-color: #7f98b3;
+}
+QPushButton:focus { border: 2px solid #84caff; }
+QPushButton[actionRole="primary"] {
+    background-color: #175cd3;
+    color: #ffffff;
+    border-color: #175cd3;
+}
+QPushButton[actionRole="primary"]:hover {
     background-color: #1849a9;
+}
+QPushButton[actionRole="success"] {
+    background-color: #12b76a;
+    color: #ffffff;
+    border-color: #12b76a;
+}
+QPushButton[actionRole="success"]:hover {
+    background-color: #039855;
+}
+QPushButton[actionRole="danger"] {
+    background-color: #ffffff;
+    color: #d92d20;
+    border: 2px solid #f04438;
+}
+QPushButton[actionRole="danger"]:hover {
+    background-color: #fef3f2;
 }
 QPushButton:disabled {
     background-color: #d0d5dd;
     color: #667085;
+    border-color: #d0d5dd;
+}
+QFrame#sideNavigation {
+    background-color: #f8fafc;
+    border-right: 1px solid #dbe4f0;
+}
+QLabel#navBrand {
+    font-size: 19px;
+    font-weight: 700;
+    color: #102a56;
+    background-color: #ffffff;
+    border: 1px solid #e4eaf1;
+    border-radius: 10px;
+    padding: 11px 6px;
+}
+QLabel#navSection {
+    color: #667085;
+    background-color: #eef2f6;
+    border-left: 3px solid #98a2b3;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 7px 10px;
+    margin-top: 10px;
+}
+QPushButton[navItem="true"] {
+    background-color: transparent;
+    color: #344054;
+    border: 0;
+    border-radius: 8px;
+    min-height: 36px;
+    padding: 9px 14px 9px 20px;
+    text-align: left;
+}
+QPushButton[navItem="true"]:hover {
+    background-color: #e4e7ec;
+}
+QPushButton[navItem="true"]:checked {
+    background-color: #e6f1ff;
+    color: #175cd3;
+    border-left: 4px solid #2e90fa;
+    font-weight: 700;
+}
+QWidget#operatorBar {
+    background-color: #ffffff;
+    border: 1px solid #dbe4f0;
+    border-radius: 8px;
+}
+QLabel#currentOperator {
+    color: #344054;
+    background-color: #f1f5f9;
+    border: 1px solid #dbe4f0;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-weight: 600;
+}
+QFrame#diagnosticBar {
+    background-color: #effcf6;
+    border: 1px solid #b7ebcf;
+    border-radius: 8px;
+}
+QLabel#diagnosticText {
+    color: #067647;
+    padding: 6px 10px;
+}
+QFrame#selectionCard, QFrame#scanHero, QFrame#scanInputCard,
+QFrame#historyCard, QFrame#runSummaryCard, QFrame#dropZone,
+QFrame#contentCard, QFrame#filterCard, QFrame#detailCard,
+QFrame#actionCard, QFrame#emptyState {
+    background-color: #ffffff;
+    border: 1px solid #dbe4f0;
+    border-radius: 12px;
+}
+QFrame#filterCard, QFrame#actionCard {
+    background-color: #f8fafc;
+}
+QFrame#emptyState {
+    border-style: dashed;
+    background-color: #fcfcfd;
+}
+QFrame#dropZone {
+    border: 2px dashed #b2ccff;
+    background-color: #f5f9ff;
+}
+QWidget#pageHeader { background-color: transparent; }
+QFrame#pageAccent {
+    background-color: #2e90fa;
+    border: 0;
+    border-radius: 1px;
+}
+QWidget#sectionHeading {
+    background-color: #f4f7fb;
+    border-radius: 7px;
+}
+QLabel#productSummary {
+    font-size: 25px;
+    font-weight: 700;
+}
+QLabel#detailTitle {
+    font-size: 19px;
+    font-weight: 700;
+    color: #102a56;
+}
+QLabel#progressCount {
+    font-size: 26px;
+    font-weight: 700;
+}
+QLabel[summaryChip="true"] {
+    border-radius: 7px;
+    padding: 8px 12px;
+    font-size: 16px;
+    font-weight: 600;
 }
 QLabel#pageTitle {
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 700;
+    color: #102a56;
+}
+QLabel#pageSubtitle {
+    color: #667085;
+    font-size: 14px;
+}
+QLabel#sectionTitle {
+    font-size: 16px;
+    font-weight: 700;
+    color: #344054;
+}
+QLabel#sectionDescription {
+    color: #667085;
+    font-size: 12px;
+}
+QLabel#emptyStateTitle {
+    font-size: 18px;
+    font-weight: 700;
+    color: #344054;
+}
+QLabel#emptyStateDescription {
+    color: #667085;
+}
+QLabel[metricChip="true"] {
+    border: 1px solid #e4e7ec;
+    border-radius: 9px;
+    padding: 9px 13px;
+    font-size: 14px;
+    font-weight: 600;
+    background-color: #f2f4f7;
+    color: #344054;
+}
+QLabel[metricTone="success"] {
+    background-color: #ecfdf3;
+    color: #067647;
+}
+QLabel[metricTone="danger"] {
+    background-color: #fef3f2;
+    color: #b42318;
+}
+QLabel[metricTone="primary"] {
+    background-color: #eff8ff;
+    color: #175cd3;
 }
 QLabel#scanFeedback {
-    font-size: 28px;
+    font-size: 30px;
     font-weight: 700;
-    padding: 10px;
+    padding: 14px 18px;
     background-color: #ffffff;
-    border: 1px solid #d0d5dd;
-    border-radius: 6px;
+    border: 3px solid #84caff;
+    border-radius: 12px;
+}
+QLabel#scanContext {
+    color: #475467;
+    font-size: 17px;
+    font-weight: 600;
 }
 QProgressBar {
-    border: 1px solid #98a2b3;
-    border-radius: 4px;
+    border: 1px solid #b7c4d3;
+    border-radius: 6px;
     background-color: #ffffff;
     text-align: center;
 }
 QProgressBar::chunk {
     background-color: #12b76a;
+    border-radius: 5px;
+}
+QSplitter::handle { background-color: transparent; }
+QSplitter::handle:hover { background-color: #d1e9ff; }
+QToolTip {
+    background-color: #102a56;
+    color: #ffffff;
+    border: 0;
+    padding: 6px 8px;
 }
 """
 
@@ -142,21 +385,41 @@ def light_palette(base: QPalette) -> QPalette:
 class MainWindow(QMainWindow):
     """Host operator identity and all primary application workflows."""
 
+    SCAN_TAB = 0
+    RUNS_TAB = 1
+    RECORDS_TAB = 2
+    MASTER_DATA_TAB = 3
+    IMPORT_TAB = 4
+    CONFIGURATIONS_TAB = 5
+    AUDITS_TAB = 6
+
+    PAGE_NAMES = (
+        "扫码作业",
+        "作业记录",
+        "记录查询",
+        "设备与站位",
+        "导入产品配置",
+        "产品配置",
+        "更多",
+    )
+
     def __init__(
         self,
         scan_widget: ScanWidget,
         master_data_widget: QWidget,
         import_widget: QWidget,
-        bom_widget: QWidget,
         configuration_widget: QWidget,
         run_widget: QWidget,
         records_widget: QWidget,
         audit_widget: QWidget,
         operator_widget: OperatorSessionWidget,
+        *,
+        layout_store: UiLayoutStore | None = None,
     ) -> None:
         super().__init__()
         register_windows_fonts()
         self._scan_widget = scan_widget
+        self._layout_store = layout_store
         self.setWindowTitle("SMT 扫码防错")
         self.resize(1180, 760)
         font = QFont()
@@ -168,19 +431,106 @@ class MainWindow(QMainWindow):
         central = QWidget()
         central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(0, 0, 0, 0)
-        central_layout.addWidget(operator_widget)
-        self.tab_widget = QTabWidget()
-        self.tab_widget.addTab(scan_widget, "扫码")
-        self.tab_widget.addTab(master_data_widget, "设备与站位")
-        self.tab_widget.addTab(import_widget, "导入配置")
-        self.tab_widget.addTab(bom_widget, "BOM 管理")
-        self.tab_widget.addTab(configuration_widget, "产品配置")
-        self.tab_widget.addTab(run_widget, "生产运行")
-        self.tab_widget.addTab(records_widget, "记录查询")
-        self.tab_widget.addTab(audit_widget, "审计日志")
-        self.tab_widget.currentChanged.connect(self._tab_changed)
-        central_layout.addWidget(self.tab_widget, 1)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        self.side_navigation = QFrame()
+        self.side_navigation.setObjectName("sideNavigation")
+        self.side_navigation.setFixedWidth(180)
+        navigation_layout = QVBoxLayout(self.side_navigation)
+        navigation_layout.setContentsMargins(8, 12, 8, 12)
+        navigation_layout.setSpacing(3)
+        brand = QLabel("SMT Guard")
+        brand.setObjectName("navBrand")
+        self.brand_label = brand
+        navigation_layout.addWidget(brand)
+
+        self.navigation_group = QButtonGroup(self)
+        self.navigation_group.setExclusive(True)
+        self.navigation_buttons: list[QPushButton] = []
+        section_starts = {0: "作业", 3: "配置", 6: "系统"}
+        tooltips = (
+            "现场主作业",
+            "作业进度与扫码记录",
+            "高级记录查询",
+            "基础配置",
+            "导入站位物料配置",
+            "产品配置管理",
+            "审计追溯与界面设置",
+        )
+        for index, name in enumerate(self.PAGE_NAMES):
+            if index in section_starts:
+                section = QLabel(section_starts[index])
+                section.setObjectName("navSection")
+                navigation_layout.addWidget(section)
+            button = QPushButton(name)
+            button.setCheckable(True)
+            button.setProperty("navItem", True)
+            button.setToolTip(tooltips[index])
+            self.navigation_group.addButton(button, index)
+            self.navigation_buttons.append(button)
+            navigation_layout.addWidget(button)
+            if index in (self.RECORDS_TAB, self.IMPORT_TAB):
+                # Keep low-frequency pages composed for direct signal routing,
+                # but expose one concise operator path.
+                button.setHidden(True)
+        navigation_layout.addStretch(1)
+        self.operator_widget = operator_widget
+        navigation_layout.addWidget(operator_widget)
+        body.addWidget(self.side_navigation)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(14, 10, 14, 10)
+        content_layout.setSpacing(8)
+        self.page_stack = QStackedWidget()
+        self.page_stack.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Ignored,
+        )
+        # Keep the historical attribute as a compatibility alias for workflow wiring.
+        self.tab_widget = self.page_stack
+        pages = (
+            scan_widget,
+            run_widget,
+            records_widget,
+            master_data_widget,
+            import_widget,
+            configuration_widget,
+            audit_widget,
+        )
+        for page in pages:
+            self.page_stack.addWidget(page)
+        self.navigation_group.idClicked.connect(self.page_stack.setCurrentIndex)
+        self.page_stack.currentChanged.connect(self._tab_changed)
+        self.navigation_buttons[0].setChecked(True)
+        content_layout.addWidget(self.page_stack, 1)
+
+        self.diagnostic_frame = QFrame()
+        self.diagnostic_frame.setObjectName("diagnosticBar")
+        diagnostic_layout = QHBoxLayout(self.diagnostic_frame)
+        diagnostic_layout.setContentsMargins(0, 0, 0, 0)
+        self.diagnostic_label = QLabel()
+        self.diagnostic_label.setObjectName("diagnosticText")
+        diagnostic_layout.addWidget(self.diagnostic_label, 1)
+        self.reset_layout_button = QPushButton("恢复默认布局")
+        self.reset_layout_button.setToolTip("清除已保存的列宽、列顺序和左右分栏比例")
+        self.reset_layout_button.clicked.connect(self._reset_layouts)
+        diagnostic_layout.addWidget(self.reset_layout_button)
+        # Normal diagnostics no longer consume vertical space on every page.
+        # Low-frequency layout reset lives with audit/settings under “更多”.
+        self.diagnostic_frame.hide()
+        audit_layout = audit_widget.layout()
+        if audit_layout is not None:
+            self.reset_layout_button.setText("重置表格列宽和分栏")
+            audit_layout.addWidget(self.reset_layout_button)
+        body.addWidget(content, 1)
+        central_layout.addLayout(body, 1)
         self.setCentralWidget(central)
+        scan_widget.configuration_combo.currentTextChanged.connect(self._update_diagnostics)
+        scan_widget.run_changed.connect(self._update_diagnostics)
+        self._update_diagnostics()
         self._prepare_table_viewports()
         QTimer.singleShot(0, self._prepare_table_viewports)
 
@@ -188,6 +538,8 @@ class MainWindow(QMainWindow):
     def _prepare_table_viewports(self) -> None:
         """Force opaque light table surfaces after Qt polishes the active tab."""
         for table in self.findChildren(QTableWidget):
+            table.setAlternatingRowColors(True)
+            table.verticalHeader().setDefaultSectionSize(36)
             table_palette = light_palette(table.palette())
             table_palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
             table.setPalette(table_palette)
@@ -199,8 +551,36 @@ class MainWindow(QMainWindow):
             viewport.setStyleSheet("background-color: #ffffff; color: #1d2939;")
             viewport.setAutoFillBackground(True)
 
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        if hasattr(self, "side_navigation"):
+            self.side_navigation.setFixedWidth(160 if event.size().width() < 1500 else 180)
+        super().resizeEvent(event)
+
+    @Slot()
+    def _reset_layouts(self) -> None:
+        reset_persistent_layouts(self, self._layout_store)
+        self.diagnostic_label.setText("● 已重置表格列宽和分栏")
+
     @Slot(int)
     def _tab_changed(self, index: int) -> None:
+        if 0 <= index < len(self.navigation_buttons):
+            self.navigation_buttons[index].setChecked(True)
         QTimer.singleShot(0, self._prepare_table_viewports)
-        if index == 0:
+        if index == self.SCAN_TAB:
             QTimer.singleShot(0, self._scan_widget.focus_scanner)
+
+    @Slot()
+    def _update_diagnostics(self) -> None:
+        voice_mode = (
+            "SAPI"
+            if os.environ.get("SMT_GUARD_VOICE_ENABLED", "1").strip().casefold()
+            not in {"0", "false", "no", "off"}
+            else "静默"
+        )
+        configuration = self._scan_widget.configuration_combo.currentText() or "未选择"
+        updated_at = QDateTime.currentDateTime().toString("HH:mm")
+        self.diagnostic_label.setText(
+            f"● 数据库正常  ·  扫码输入：按当前页面自动聚焦  ·  "
+            f"中文语音：{voice_mode}  ·  当前配置：{configuration}  ·  "
+            f"更新于 {updated_at}"
+        )

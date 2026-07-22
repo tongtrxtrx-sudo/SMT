@@ -2,7 +2,11 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from smt_guard.xlsx_reader import OpenpyxlWorkbookReader, WorkbookReadError
+from smt_guard.xlsx_reader import (
+    AmbiguousWorksheetError,
+    OpenpyxlWorkbookReader,
+    WorkbookReadError,
+)
 
 
 class FakeWorksheet:
@@ -87,6 +91,44 @@ class OpenpyxlWorkbookReaderTests(unittest.TestCase):
 
         self.assertIn("Worksheet", str(caught.exception))
         self.assertIn("Other", str(caught.exception))
+        self.assertTrue(workbook.closed)
+
+    def test_automatically_prefers_worksheet_when_no_name_is_supplied(self) -> None:
+        workbook = FakeWorkbook(
+            {
+                "说明": FakeWorksheet([("说明",), ("不要导入",)]),
+                "Worksheet": FakeWorksheet([("站位编码",), ("F-01",)]),
+            }
+        )
+        reader = OpenpyxlWorkbookReader(workbook_loader=RecordingLoader(workbook))
+
+        rows = reader.read_sheet(Path("configuration.xlsx"), "")
+
+        self.assertEqual([{"站位编码": "F-01", "_row_number": 2}], rows)
+        self.assertTrue(workbook.closed)
+
+    def test_automatically_uses_the_only_worksheet_regardless_of_name(self) -> None:
+        workbook = FakeWorkbook({"站位表": FakeWorksheet([("站位编码",), ("F-01",)])})
+        reader = OpenpyxlWorkbookReader(workbook_loader=RecordingLoader(workbook))
+
+        rows = reader.read_sheet(Path("configuration.xlsx"), "")
+
+        self.assertEqual([{"站位编码": "F-01", "_row_number": 2}], rows)
+        self.assertTrue(workbook.closed)
+
+    def test_reports_ambiguous_worksheets_for_operator_selection(self) -> None:
+        workbook = FakeWorkbook(
+            {
+                "站位表 A": FakeWorksheet([("站位编码",), ("F-01",)]),
+                "站位表 B": FakeWorksheet([("站位编码",), ("F-02",)]),
+            }
+        )
+        reader = OpenpyxlWorkbookReader(workbook_loader=RecordingLoader(workbook))
+
+        with self.assertRaises(AmbiguousWorksheetError) as caught:
+            reader.read_sheet(Path("configuration.xlsx"), "")
+
+        self.assertEqual(("站位表 A", "站位表 B"), caught.exception.sheet_names)
         self.assertTrue(workbook.closed)
 
     def test_rejects_ambiguous_headers_and_closes_workbook(self) -> None:

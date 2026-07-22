@@ -4,10 +4,13 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from smt_guard.operator import OperatorSession
 from smt_guard.sqlite import SqliteAuditRepository, SqliteDatabase, SqliteMasterDataRepository
+from smt_guard.ui.main_window import APPLICATION_STYLE
 from smt_guard.ui.master_data import DeviceStationWidget
 
 
@@ -31,12 +34,27 @@ class DeviceStationWidgetTests(unittest.TestCase):
         self.repository = SqliteMasterDataRepository(self.connection)
 
     def make_widget(self) -> DeviceStationWidget:
-        widget = DeviceStationWidget(self.repository)
+        widget = DeviceStationWidget(
+            self.repository,
+            confirmation_provider=lambda _parent, _title, _message: True,
+        )
         self.addCleanup(widget.close)
         return widget
 
     def test_adds_trimmed_device_and_refreshes_table(self) -> None:
         widget = self.make_widget()
+        self.assertEqual(
+            ["全部状态", "启用", "停用"],
+            [widget.device_status_filter.itemText(index) for index in range(3)],
+        )
+        self.assertEqual("启用", widget.enable_device_button.text())
+        self.assertEqual("停用", widget.disable_device_button.text())
+        self.assertFalse(hasattr(widget, "delete_device_button"))
+        self.assertFalse(hasattr(widget, "delete_station_button"))
+        self.assertEqual(4, widget.device_table.columnCount())
+        self.assertEqual(4, widget.station_table.columnCount())
+        self.assertFalse(widget.bulk_group.isVisible())
+        self.assertEqual("0 台", widget.device_count_label.text())
         widget.device_code_input.setText(" SMT-01 ")
         widget.device_name_input.setText(" Machine 1 ")
         widget.device_line_input.setText(" Line A ")
@@ -47,8 +65,12 @@ class DeviceStationWidgetTests(unittest.TestCase):
         table_code = widget.device_table.item(0, 0)
         assert table_code is not None
         self.assertEqual("Machine 1", device.name)
+        self.assertTrue(device.enabled)
         self.assertEqual(1, widget.device_table.rowCount())
+        self.assertEqual("1 台", widget.device_count_label.text())
         self.assertEqual("SMT-01", table_code.text())
+        self.assertFalse(widget.enable_device_button.isEnabled())
+        self.assertTrue(widget.disable_device_button.isEnabled())
         self.assertIn("已创建设备", widget.status_label.text())
 
     def test_shows_duplicate_error_without_blocking_dialog(self) -> None:
@@ -65,6 +87,9 @@ class DeviceStationWidgetTests(unittest.TestCase):
     def test_adds_single_and_bulk_stations_for_selected_device(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")
         widget = self.make_widget()
+        self.assertEqual(1, widget.bulk_start_input.value())
+        self.assertEqual("01", widget.bulk_start_input.text())
+        self.assertEqual(2, widget.bulk_width_input.value())
         widget.station_code_input.setText(" F-01 ")
 
         widget.add_station_button.click()
@@ -79,13 +104,51 @@ class DeviceStationWidgetTests(unittest.TestCase):
             [station.code for station in self.repository.list_stations("SMT-01")],
         )
         self.assertEqual(3, widget.station_table.rowCount())
+        self.assertEqual("3 个", widget.station_count_label.text())
+        self.assertFalse(widget.enable_station_button.isEnabled())
+        self.assertTrue(widget.disable_station_button.isEnabled())
         self.assertIn("2 个站位", widget.status_label.text())
+
+    def test_bulk_number_buttons_have_large_click_targets_and_change_values(self) -> None:
+        self.repository.add_device("SMT-01", "Machine 1", "Line A")
+        widget = self.make_widget()
+        widget.setStyleSheet(APPLICATION_STYLE)
+        widget.resize(1180, 760)
+        widget.show()
+        widget.bulk_toggle_button.click()
+        self.app.processEvents()
+
+        for spin_box in (
+            widget.bulk_start_input,
+            widget.bulk_end_input,
+            widget.bulk_width_input,
+        ):
+            self.assertEqual("+", spin_box.increment_button.text())
+            self.assertEqual("−", spin_box.decrement_button.text())
+            self.assertGreaterEqual(spin_box.increment_button.width(), 34)
+            self.assertGreaterEqual(spin_box.increment_button.height(), 34)
+            self.assertGreaterEqual(spin_box.decrement_button.width(), 34)
+            self.assertGreaterEqual(spin_box.decrement_button.height(), 34)
+            original = spin_box.value()
+            QTest.mouseClick(
+                spin_box.increment_button,
+                Qt.MouseButton.LeftButton,
+            )
+            self.assertEqual(original + 1, spin_box.value())
+            QTest.mouseClick(
+                spin_box.decrement_button,
+                Qt.MouseButton.LeftButton,
+            )
+            self.assertEqual(original, spin_box.value())
 
     def test_device_selection_refreshes_station_context(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")
         self.repository.add_device("SMT-02", "Machine 2", "Line A")
+        self.repository.add_station("SMT-01", "F-01")
         self.repository.add_station("SMT-02", "R-01")
         widget = self.make_widget()
+
+        self.assertEqual("F-01", widget.station_code_input.text())
 
         widget.device_table.selectRow(1)
         self.app.processEvents()
@@ -94,29 +157,70 @@ class DeviceStationWidgetTests(unittest.TestCase):
         assert station_code is not None
         self.assertIn("SMT-02", widget.selected_device_label.text())
         self.assertEqual("R-01", station_code.text())
+        self.assertEqual("R-01", widget.station_code_input.text())
 
-    def test_disables_entities_and_protects_referenced_station(self) -> None:
+    def test_displays_station_codes_in_natural_numeric_order(self) -> None:
+        self.repository.add_device("SMT-01", "Machine 1", "Line A")
+        for code in ("F-10", "F-2", "F-1", "F-20", "F-3"):
+            self.repository.add_station("SMT-01", code)
+        widget = self.make_widget()
+
+        displayed_codes: list[str] = []
+        for row in range(widget.station_table.rowCount()):
+            item = widget.station_table.item(row, 0)
+            assert item is not None
+            displayed_codes.append(item.text())
+        self.assertEqual(
+            ["F-1", "F-2", "F-3", "F-10", "F-20"],
+            displayed_codes,
+        )
+
+    def test_disables_entities_without_exposing_delete_actions(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")
         self.repository.add_station("SMT-01", "F-01")
         self.repository.mark_station_referenced("SMT-01", "F-01")
         widget = self.make_widget()
 
         widget.disable_device_button.click()
+        self.assertTrue(widget.enable_device_button.isEnabled())
+        self.assertFalse(widget.disable_device_button.isEnabled())
         widget.station_table.selectRow(0)
         widget.disable_station_button.click()
-        widget.delete_station_button.click()
 
         self.assertFalse(self.repository.is_device_enabled("SMT-01"))
         self.assertFalse(self.repository.is_station_enabled("SMT-01", "F-01"))
-        self.assertIn("Referenced station cannot be deleted", widget.status_label.text())
+        self.assertTrue(widget.enable_station_button.isEnabled())
+        self.assertFalse(widget.disable_station_button.isEnabled())
         self.assertEqual(1, widget.station_table.rowCount())
+
+    def test_saving_changes_reenables_disabled_device_and_station(self) -> None:
+        self.repository.add_device("SMT-01", "Machine 1", "Line A")
+        self.repository.add_station("SMT-01", "F-01")
+        widget = self.make_widget()
+
+        widget.disable_device_button.click()
+        widget.device_name_input.setText("Machine One")
+        widget.update_device_button.click()
+        self.assertTrue(self.repository.is_device_enabled("SMT-01"))
+        self.assertFalse(widget.enable_device_button.isEnabled())
+        self.assertTrue(widget.disable_device_button.isEnabled())
+
+        widget.station_table.selectRow(0)
+        widget.disable_station_button.click()
+        widget.station_name_input.setText("Front feeder")
+        widget.update_station_button.click()
+        self.assertTrue(self.repository.get_station("SMT-01", "F-01").enabled)
+        self.assertFalse(widget.enable_station_button.isEnabled())
+        self.assertTrue(widget.disable_station_button.isEnabled())
 
     def test_filters_updates_enables_and_archives_with_current_operator(self) -> None:
         self.repository.add_device("SMT-01", "Machine 1", "Line A")
         self.repository.add_station("SMT-01", "F-01")
         session = OperatorSession("ADMIN-UI")
         widget = DeviceStationWidget(
-            self.repository, operator_provider=session.require
+            self.repository,
+            operator_provider=session.require,
+            confirmation_provider=lambda _parent, _title, _message: True,
         )
         self.addCleanup(widget.close)
 
@@ -124,17 +228,46 @@ class DeviceStationWidgetTests(unittest.TestCase):
         widget.device_line_input.setText("Line B")
         widget.update_device_button.click()
         widget.disable_device_button.click()
+        self.assertTrue(widget.enable_device_button.isEnabled())
         widget.enable_device_button.click()
+        self.assertFalse(widget.enable_device_button.isEnabled())
         widget.station_name_input.setText("Front feeder")
         widget.update_station_button.click()
-        widget.archive_station_button.click()
-        widget.station_archived_check.setChecked(True)
+        widget.disable_station_button.click()
 
         self.assertEqual("Machine One", self.repository.get_device("SMT-01").name)
         self.assertEqual("Front feeder", self.repository.get_station("SMT-01", "F-01").name)
-        self.assertEqual("是", widget.station_table.item(0, 4).text())  # type: ignore[union-attr]
+        self.assertEqual("停用", widget.station_table.item(0, 2).text())  # type: ignore[union-attr]
         audits = SqliteAuditRepository(self.connection).search(actor="ADMIN-UI")
         self.assertEqual(5, len(audits))
+
+    def test_cancelled_disable_keeps_device_enabled(self) -> None:
+        self.repository.add_device("SMT-01", "Machine 1", "Line A")
+        widget = DeviceStationWidget(
+            self.repository,
+            confirmation_provider=lambda _parent, _title, _message: False,
+        )
+        self.addCleanup(widget.close)
+
+        widget.disable_device_button.click()
+
+        self.assertTrue(self.repository.is_device_enabled("SMT-01"))
+
+    def test_legacy_archived_entities_can_return_to_use(self) -> None:
+        self.repository.add_device("SMT-01", "Machine 1", "Line A")
+        self.repository.add_station("SMT-01", "F-01")
+        self.repository.archive_device("SMT-01")
+        widget = self.make_widget()
+
+        self.assertEqual("停用", widget.device_table.item(0, 3).text())  # type: ignore[union-attr]
+        widget.enable_device_button.click()
+        widget.station_table.selectRow(0)
+        widget.enable_station_button.click()
+
+        self.assertFalse(self.repository.get_device("SMT-01").archived)
+        self.assertFalse(self.repository.get_station("SMT-01", "F-01").archived)
+        self.assertEqual("启用", widget.device_table.item(0, 3).text())  # type: ignore[union-attr]
+        self.assertEqual("启用", widget.station_table.item(0, 2).text())  # type: ignore[union-attr]
 
 
 if __name__ == "__main__":

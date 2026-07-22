@@ -11,6 +11,8 @@
 - Case 3 (station creation): Add one station and a formatted station range for the selected device.
 - Case 4 (selection): Selecting another device refreshes the station list and device label.
 - Case 5 (lifecycle): Disable a device/station and prevent deletion of a referenced station.
+- Case 6 (visual hierarchy): Show lists and record counts before editor controls, and keep batch
+  station creation collapsed until the user explicitly expands it.
 
 ## Status
 

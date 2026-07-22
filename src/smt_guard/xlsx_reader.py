@@ -11,6 +11,15 @@ class WorkbookReadError(ValueError):
     """Raised when a workbook cannot be mapped to unambiguous tabular rows."""
 
 
+class AmbiguousWorksheetError(WorkbookReadError):
+    """Raised when automatic worksheet selection requires an operator choice."""
+
+    def __init__(self, sheet_names: Sequence[str]) -> None:
+        self.sheet_names = tuple(sheet_names)
+        available = "、".join(self.sheet_names)
+        super().__init__(f"工作簿包含多个工作表，请选择要导入的页签：{available}")
+
+
 @dataclass(frozen=True)
 class WorkbookLimits:
     """Resource limits applied before an XLSX ZIP container is extracted."""
@@ -129,22 +138,36 @@ class OpenpyxlWorkbookReader:
     def read_sheet(self, path: Path, sheet_name: str) -> list[dict[str, object]]:
         workbook = self._open(path)
         try:
-            if sheet_name not in workbook.sheetnames:
+            selected_sheet = self._select_sheet(workbook.sheetnames, sheet_name)
+            if selected_sheet not in workbook.sheetnames:
                 available = ", ".join(workbook.sheetnames) or "none"
                 raise WorkbookReadError(
-                    f"Worksheet {sheet_name!r} was not found; available worksheets: {available}"
+                    f"Worksheet {selected_sheet!r} was not found; available worksheets: {available}"
                 )
 
-            rows = iter(workbook[sheet_name].iter_rows(values_only=True))
+            rows = iter(workbook[selected_sheet].iter_rows(values_only=True))
             try:
                 raw_headers = next(rows)
             except StopIteration as error:
-                raise WorkbookReadError(f"Worksheet {sheet_name!r} is empty") from error
+                raise WorkbookReadError(f"Worksheet {selected_sheet!r} is empty") from error
 
             headers = self._headers(raw_headers)
             return self._map_rows(rows, headers)
         finally:
             workbook.close()
+
+    @staticmethod
+    def _select_sheet(sheet_names: Sequence[str], requested: str) -> str:
+        normalized = requested.strip()
+        if normalized:
+            return normalized
+        if "Worksheet" in sheet_names:
+            return "Worksheet"
+        if len(sheet_names) == 1:
+            return sheet_names[0]
+        if not sheet_names:
+            raise WorkbookReadError("工作簿中没有可导入的工作表")
+        raise AmbiguousWorksheetError(sheet_names)
 
     def _open(self, path: Path) -> WorkbookLike:
         try:

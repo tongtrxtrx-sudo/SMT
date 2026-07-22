@@ -6,6 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Protocol
 
+from smt_guard.master_data import Station, UnknownEntityError
 from smt_guard.scan import ProductConfiguration
 
 
@@ -46,10 +47,15 @@ class MasterDataLookup(Protocol):
         """Return whether a station exists and is enabled."""
         ...
 
-class ProductConfigurationBuilder:
-    """Validate station-table rows against BOM and physical master data."""
+    def resolve_station(self, station_code: str) -> Station:
+        """Resolve one globally unique station code to its owning device."""
+        ...
 
-    REQUIRED_COLUMNS = ("设备编码", "站位编码", "物料编码")
+
+class ProductConfigurationBuilder:
+    """Validate station/material rows against physical master data."""
+
+    REQUIRED_COLUMNS = ("站位编码", "物料编码")
 
     def __init__(self, master_data: MasterDataLookup) -> None:
         self._master_data = master_data
@@ -61,6 +67,7 @@ class ProductConfigurationBuilder:
         materials: Mapping[str, object],
         station_rows: Sequence[Mapping[str, object]],
     ) -> ProductConfiguration:
+        del materials  # Kept in the signature for legacy integrations.
         assignments: dict[tuple[str, str], str] = {}
         errors: list[str] = []
 
@@ -71,9 +78,21 @@ class ProductConfigurationBuilder:
                 errors.append(f"Row {row_number}: missing column {missing[0]}")
                 continue
 
-            device, station, material = self._codes(row)
-            if not device or not station or not material:
-                errors.append(f"Row {row_number}: device, station, and material are required")
+            supplied_device, station, material = self._codes(row)
+            if not station or not material:
+                errors.append(f"Row {row_number}: station and material are required")
+                continue
+            try:
+                resolved = self._master_data.resolve_station(station)
+            except UnknownEntityError:
+                errors.append(f"Row {row_number}: unknown station {station}")
+                continue
+            device = resolved.device_code
+            if supplied_device and supplied_device != device:
+                errors.append(
+                    f"Row {row_number}: station {station} belongs to device {device}, "
+                    f"not {supplied_device}"
+                )
                 continue
             if not self._master_data.is_device_enabled(device):
                 errors.append(f"Row {row_number}: unknown or disabled device {device}")
@@ -81,10 +100,6 @@ class ProductConfigurationBuilder:
             if not self._master_data.is_station_enabled(device, station):
                 errors.append(f"Row {row_number}: unknown or disabled station {device}/{station}")
                 continue
-            if material not in materials:
-                errors.append(f"Row {row_number}: material {material} does not exist in BOM")
-                continue
-
             key = (device, station)
             if key in assignments:
                 errors.append(f"Row {row_number}: duplicate station {device}/{station}")
@@ -104,7 +119,7 @@ class ProductConfigurationBuilder:
     @staticmethod
     def _codes(row: Mapping[str, object]) -> tuple[str, str, str]:
         return (
-            str(row["设备编码"]).strip(),
+            str(row.get("设备编码", "")).strip(),
             str(row["站位编码"]).strip(),
             str(row["物料编码"]).strip(),
         )

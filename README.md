@@ -7,18 +7,19 @@ configuration.
 ## MVP capabilities
 
 - Configure devices and physical stations.
-- Record the current operator once per application session and attribute all subsequent changes,
-  imports, production runs, and audits to that operator.
-- Import an `.xlsx` BOM and a product station table in separate actions.
-- Scan device, station, and material codes in a controlled sequence.
+- Restore the last confirmed operator at startup and attribute all subsequent changes, imports,
+  production runs, and audits to that operator until an explicit switch.
+- Import and activate a product configuration directly from one station/material workbook.
+- Enforce globally unique station codes and scan station then material; the owning device is
+  resolved automatically while remaining available in records and exports.
 - Compare material codes exactly while preserving leading zeroes.
 - Show clear OK or NG feedback and production progress.
 - Persist device/station lifecycle, versioned BOMs, product configurations, production runs,
   station progress, append-only verification attempts, and critical-change audit logs in SQLite.
 - Review and export run records as UTF-8 CSV.
-- Manage versioned BOMs and product configurations through draft, release, activation, disable/
-  obsolete, and archive lifecycles.
-- Query production-run snapshots and station progress, resume interrupted runs, and filter the
+- Keep historical BOM rows readable for compatibility while excluding BOM management from the
+  normal operator workflow.
+- Query job snapshots and station progress, resume interrupted jobs, and filter the
   append-only audit log.
 
 Learning mode, fuzzy material matching, brand substitution, networking, PLC integration, and
@@ -53,56 +54,67 @@ Start the desktop application from the synchronized project environment:
 uv run smt-guard
 ```
 
+The production window starts maximized. The scan page keeps one vertical reading order: a bounded
+current-task card, large scanner input, compact single-row progress, and a full-width attempt table.
+The attempt table is shown by default at full-screen widths and collapsed in a medium window.
+Management tables and detail panes also share available width responsively, while the import guide
+remains centered at a readable maximum width.
+
 Application data is stored in `%LOCALAPPDATA%\SMTGuard\smt_guard.sqlite3` by default.
+The last operator is stored beside it in `last_operator.txt`, and user-adjusted table columns and
+split-pane proportions are stored in `ui_layout.json` so the next launch restores the same view.
 
 ## Persistence foundation
 
 The database is upgraded by ordered, checksummed forward migrations recorded in
 `schema_migrations`; startup rejects unknown future versions or modified migration history.
-Released BOM and configuration versions are immutable, while changes are created as new versions.
+Released configuration versions are immutable, while changes are created as new versions. Legacy
+BOM data remains readable but is no longer required by normal imports or scanning.
 Only active configurations whose current devices and stations remain enabled are offered to the
 scan page. Production-run headers and configuration snapshots are written before the first scan,
 so zero-scan and interrupted runs remain queryable and recoverable through the repository layer.
 
-The desktop UI now exposes eight focused pages: scanning, device/station master data, import,
-BOM management, product-configuration management, production-run management, record query/export,
-and audit query. A shared operator bar sits above all pages. Write actions are rejected until a
-non-empty operator identifier is confirmed.
+The everyday navigation exposes `扫码作业`, `作业记录`, `设备与站位`, `产品配置`, and `更多`, with
+scanning as the first page. After confirmation, the compact lower-left operator control shows the
+current identity and a deliberate switch action. The confirmed identity is restored from the
+application data directory on the next startup. Write actions are rejected until a non-empty
+operator identifier is confirmed.
 
 ## Product lifecycle workflow
 
-1. Confirm the current operator in the bar above the page tabs.
+1. Confirm or switch the current operator in the lower-left sidebar control.
 2. Use **设备与站位** to search, edit, enable, disable, delete unreferenced master data, or archive
    referenced data. Archived state is displayed separately from ordinary disabled state.
-3. Import a BOM. For a changed BOM whose previous version already exists, fill **BOM 新版本** so
-   the change is stored as another draft instead of modifying released details in place.
-4. Use **BOM 管理** to inspect materials and provenance (source filename, SHA-256, import time, and
-   operator), compare two versions, then publish, activate, obsolete, or archive them.
-5. Use **产品配置** to copy a released configuration into a new draft, add/remove/edit station
-   assignments, validate it, and publish/activate/disable/archive it. Released assignment details
-   are immutable. The scan page lists only active, non-empty configurations whose referenced
-   devices and stations are still enabled.
-6. Start work on **扫码**. A run header and configuration snapshot are persisted before the first
-   scan. Starting another run, changing operator, or closing the application interrupts an
-   unfinished run. **生产运行** can filter runs, show every station snapshot state, and return an
-   interrupted run to the scan page for recovery. A run completes automatically after the final
+3. In **产品配置**, choose **导入新配置**, enter the product code and configuration version, select
+   a two-column station/material workbook, and choose **导入并使用**. The owning device is resolved
+   from each globally unique station code and the validated configuration is activated immediately.
+4. Use **产品配置** to copy an active configuration into a new draft, add/remove/edit station and
+   material assignments, then **保存并校验** before activation. Active assignment details are
+   immutable. The scan page lists only active, non-empty configurations whose referenced devices
+   and stations are still enabled.
+5. Start work on **扫码作业**. A job header and configuration snapshot are persisted before the
+   first scan. The page keeps one large current-step prompt visible, accepts scanner Enter directly,
+   reports scanner focus, and shows recent history by default. Starting another job, changing
+   operator, or closing the application interrupts an unfinished job. **作业记录** can filter jobs
+   in a compact five-column list, show full time/interruption details beside it, inspect station
+   progress and scan records, export the selected job as CSV, and return an interrupted job to
+   scanning for recovery. A job completes automatically after the final
    required station receives an OK verification.
-7. Use **审计日志** to filter immutable history by entity type/key, operator, action, and ISO time
-   range. Scan attempts and audit entries cannot be edited or deleted.
+6. Use **更多 · 审计日志** to filter immutable history by entity type/key, operator, action, and a
+   calendar date-time range. **今天**, **近 7 天**, and **近 30 天** apply common ranges directly.
+   Scan attempts and audit entries cannot be edited or deleted.
 
 ## Import workflow
 
 1. Create and enable the required devices and stations on the master-data page.
-2. On the import page, select a BOM and choose **Import BOM**. The product and material count are
-   available immediately; no station-table selection is required.
-3. Select a station table, enter its worksheet name and product version, then choose
-   **Import station table**. The station assignments are validated against the BOM currently loaded
-   in the application session.
+2. On **产品配置**, choose **导入新配置**, fill in `产品编码` and `配置版本`, and select the worksheet.
+3. Import an Excel sheet whose required columns are `站位编码` and `物料编码`, then choose
+   **导入并使用**. Validation feedback stays on the same page.
 
-After restarting the application, import the BOM again before importing another station table.
-The supplied template is `templates\站位表导入模板.xlsx`. Its `Worksheet` sheet uses the required
-columns `设备编码`, `站位编码`, and `物料编码`; replace or delete the example row before use and keep
-all codes as text to preserve leading zeroes.
+Use **下载模板** on the import page or the supplied `templates\站位表导入模板.xlsx`. Replace or
+delete the example row and keep all codes as text to preserve leading zeroes. Existing three-column
+files containing `设备编码` remain supported; when supplied, the device must match the station's
+actual owner.
 
 ## Windows build
 
@@ -124,6 +136,48 @@ $env:SMT_GUARD_DATA_DIR = "$env:TEMP\SMTGuard-Smoke"
 For validation without overwriting an existing untracked `build` or `dist`, invoke PyInstaller
 directly with separate `--workpath` and `--distpath` directories and copy the template into that
 isolated distribution before running the same smoke test.
+
+## 入库标签打印工具
+
+仓库同时提供一个与 SMT Guard 数据库完全独立的小工具。它读取采购入库单 `.xlsx`，按中文
+表头自动识别入库单和物料明细，为每种物料生成一个独立的 60 × 40 mm Code 128 条码标签
+PDF。标签只包含稳定的商品名称、商品编号和规格，不包含入库单号、日期或数量，因此同一
+物料可以跨入库单直接复用。导入和导出都不会修改原始 Excel，也不会写入 SMT Guard 数据库。
+
+从项目环境启动，并可选地在启动时直接载入一个文件：
+
+```powershell
+uv run smt-receipt-labels
+uv run smt-receipt-labels "C:\Users\Operator\Downloads\采购入库单.xlsx"
+```
+
+界面操作只有三步：选择 Excel、标签格式和标签工作目录，核对需要生成的物料，准备当前打印。
+“标签格式”下拉框目前提供 `60 × 40 mm · Code 128 标准物料标签`，已按格式编号接入
+生成和复用判断，后续可以继续增加其他尺寸或条码类型。默认工作目录为桌面的
+`SMT物料标签`，若被删除，下次启动时会自动重新创建。
+工作目录中由工具固定管理两个子文件夹：
+
+- `标签库`：永久保存每种物料的标准标签。商品编号、名称和规格均未变化且文件仍存在时直接
+  复用，不会重复生成；内容变化时只更新对应物料的文件。
+- `当前打印`：只包含本次选中的标签。程序每次启动以及每次点击“准备当前打印”时都会自动
+  清空其中的旧文件，再把选中的标签从标签库复制进来。为防止误删，自动清理只会在带有工具
+  安全标记的固定子文件夹内执行；`标签库`不会被清空。
+
+工作目录会自动保存，下次启动继续使用。每个 PDF 只有一页，页面尺寸固定为 60 × 40 mm。
+需要同一物料打印多张时，请在 PDF 打印窗口设置打印份数，并选择“实际大小”或 100% 比例，
+避免打印驱动缩放标签。
+
+生成独立的 Windows 免安装目录：
+
+```powershell
+.\scripts\build_receipt_labels.ps1
+```
+
+可执行文件位于 `dist\SMTReceiptLabels\SMTReceiptLabels.exe`。无需显示窗口即可检查打包启动：
+
+```powershell
+.\dist\SMTReceiptLabels\SMTReceiptLabels.exe --smoke-test
+```
 
 ## Safety
 

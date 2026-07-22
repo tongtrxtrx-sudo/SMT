@@ -3,12 +3,14 @@
 from collections.abc import Callable
 from typing import Protocol
 
-from PySide6.QtCore import Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
+    QAbstractSpinBox,
     QComboBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -18,19 +20,34 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from smt_guard.master_data import Device, MasterDataError, Station
+from smt_guard.ui.components import (
+    PageHeader,
+    confirm_action,
+    content_card,
+    prepare_table,
+    section_heading,
+    set_feedback,
+    show_notification,
+)
+from smt_guard.ui.tables import (
+    UiLayoutStore,
+    enable_splitter_layout,
+    enable_table_layout,
+    set_column_widths,
+    set_responsive_columns,
+)
 
 
 class MasterDataRepository(Protocol):
     """Operations required by the device and station screen."""
 
-    def add_device(
-        self, code: str, name: str, line: str, *, actor: str = "SYSTEM"
-    ) -> Device:
+    def add_device(self, code: str, name: str, line: str, *, actor: str = "SYSTEM") -> Device:
         """Create one device."""
         ...
 
@@ -116,11 +133,65 @@ class MasterDataRepository(Protocol):
         self, device_code: str, station_code: str, *, actor: str = "SYSTEM"
     ) -> None: ...
 
-    def delete_station(
-        self, device_code: str, station_code: str, *, actor: str = "SYSTEM"
-    ) -> None:
+    def delete_station(self, device_code: str, station_code: str, *, actor: str = "SYSTEM") -> None:
         """Delete one unreferenced station."""
         ...
+
+
+class LargeStepSpinBox(QSpinBox):
+    """Numeric input with explicit shop-floor-sized decrement/increment buttons."""
+
+    BUTTON_WIDTH = 38
+
+    def __init__(self, *, minimum_digits: int = 1) -> None:
+        self._minimum_digits = max(1, minimum_digits)
+        super().__init__()
+        self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+
+        self.decrement_button = QToolButton(self)
+        self.decrement_button.setObjectName("spinDecrement")
+        self.decrement_button.setText("−")
+        self.decrement_button.setToolTip("减少 1")
+        self.decrement_button.setAccessibleName("减少 1")
+
+        self.increment_button = QToolButton(self)
+        self.increment_button.setObjectName("spinIncrement")
+        self.increment_button.setText("+")
+        self.increment_button.setToolTip("增加 1")
+        self.increment_button.setAccessibleName("增加 1")
+
+        for button in (self.decrement_button, self.increment_button):
+            button.setAutoRepeat(True)
+            button.setAutoRepeatDelay(350)
+            button.setAutoRepeatInterval(90)
+
+        self.decrement_button.clicked.connect(self.stepDown)
+        self.increment_button.clicked.connect(self.stepUp)
+
+    def textFromValue(self, value: int) -> str:  # noqa: N802
+        """Keep configured leading zeroes without changing the numeric value."""
+        return str(value).zfill(self._minimum_digits)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        """Keep both buttons large and aligned at the right edge."""
+        super().resizeEvent(event)
+        button_height = max(self.height() - 4, 1)
+        increment_left = self.width() - self.BUTTON_WIDTH - 2
+        decrement_left = increment_left - self.BUTTON_WIDTH - 2
+        self.decrement_button.setGeometry(
+            decrement_left,
+            2,
+            self.BUTTON_WIDTH,
+            button_height,
+        )
+        self.increment_button.setGeometry(
+            increment_left,
+            2,
+            self.BUTTON_WIDTH,
+            button_height,
+        )
+        self.decrement_button.raise_()
+        self.increment_button.raise_()
 
 
 class DeviceStationWidget(QWidget):
@@ -133,44 +204,87 @@ class DeviceStationWidget(QWidget):
         repository: MasterDataRepository,
         *,
         operator_provider: Callable[[], str] | None = None,
+        layout_store: UiLayoutStore | None = None,
+        confirmation_provider: Callable[[QWidget | None, str, str], bool] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
         self._operator_provider = operator_provider
+        self._layout_store = layout_store
+        self._confirm = confirmation_provider or confirm_action
         self._build_ui()
         self._connect_signals()
         self.refresh_devices()
 
+    def set_confirmation_provider(
+        self,
+        provider: Callable[[QWidget | None, str, str], bool],
+    ) -> None:
+        """Override confirmation handling for application composition or tests."""
+        self._confirm = provider
+
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        title = QLabel("设备与站位管理")
-        title.setObjectName("pageTitle")
-        root.addWidget(title)
+        root.setSpacing(10)
+        root.addWidget(
+            PageHeader(
+                "设备与站位",
+                "先选择设备，再维护该设备的站位；批量创建等低频操作默认收起。",
+            )
+        )
 
         splitter = QSplitter()
+        self.splitter = splitter
         splitter.addWidget(self._build_device_panel())
         splitter.addWidget(self._build_station_panel())
-        splitter.setSizes([480, 620])
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([900, 900])
+        enable_splitter_layout(splitter, "master-data/main", self._layout_store)
         root.addWidget(splitter, 1)
 
         self.status_label = QLabel("就绪")
         self.status_label.setObjectName("feedbackLabel")
+        set_feedback(self.status_label, "neutral", "就绪")
+        self.status_label.hide()
         root.addWidget(self.status_label)
 
     def _build_device_panel(self) -> QWidget:
-        panel = QGroupBox("设备")
+        panel = content_card()
         layout = QVBoxLayout(panel)
+        heading = QHBoxLayout()
+        heading.addWidget(section_heading("设备", "选择后可编辑名称、产线和状态"), 1)
+        self.device_count_label = QLabel("0 台")
+        self.device_count_label.setProperty("metricChip", True)
+        self.device_count_label.setProperty("metricTone", "primary")
+        heading.addWidget(self.device_count_label)
+        layout.addLayout(heading)
         query = QHBoxLayout()
         self.device_query_input = QLineEdit()
         self.device_query_input.setPlaceholderText("按编码、名称或产线筛选")
         self.device_status_filter = QComboBox()
         self.device_status_filter.addItems(("全部状态", "启用", "停用"))
-        self.device_archived_check = QCheckBox("包含归档")
         query.addWidget(self.device_query_input, 1)
         query.addWidget(self.device_status_filter)
-        query.addWidget(self.device_archived_check)
         layout.addLayout(query)
+
+        self.device_table = self._table(("设备编码", "设备名称", "产线", "状态"))
+        set_column_widths(self.device_table, (105, 150, 105, 70))
+        set_responsive_columns(
+            self.device_table,
+            stretch=(0, 1, 2),
+            compact=(3,),
+        )
+        enable_table_layout(
+            self.device_table,
+            "master-data/devices",
+            self._layout_store,
+        )
+        layout.addWidget(self.device_table, 1)
+
+        layout.addWidget(section_heading("设备信息", "修改现有设备，或输入新编码创建设备"))
         form = QFormLayout()
         self.device_code_input = QLineEdit()
         self.device_name_input = QLineEdit()
@@ -182,78 +296,118 @@ class DeviceStationWidget(QWidget):
 
         buttons = QHBoxLayout()
         self.add_device_button = QPushButton("创建设备")
+        self.add_device_button.setProperty("actionRole", "primary")
         self.update_device_button = QPushButton("保存修改")
-        self.enable_device_button = QPushButton("启用设备")
-        self.disable_device_button = QPushButton("停用设备")
-        self.delete_device_button = QPushButton("删除未引用")
-        self.archive_device_button = QPushButton("归档设备")
+        self.update_device_button.setProperty("actionRole", "primary")
+        self.enable_device_button = QPushButton("启用")
+        self.enable_device_button.setProperty("actionRole", "success")
+        self.disable_device_button = QPushButton("停用")
+        self.disable_device_button.setProperty("actionRole", "danger")
         buttons.addWidget(self.add_device_button)
         buttons.addWidget(self.update_device_button)
         buttons.addWidget(self.enable_device_button)
         buttons.addWidget(self.disable_device_button)
-        buttons.addWidget(self.delete_device_button)
-        buttons.addWidget(self.archive_device_button)
+        buttons.addStretch(1)
         layout.addLayout(buttons)
-
-        self.device_table = self._table(("设备编码", "设备名称", "产线", "状态", "归档"))
-        layout.addWidget(self.device_table)
         return panel
 
     def _build_station_panel(self) -> QWidget:
-        panel = QGroupBox("站位")
+        panel = content_card()
         layout = QVBoxLayout(panel)
-        self.selected_device_label = QLabel("当前设备：未选择")
-        layout.addWidget(self.selected_device_label)
+        heading = QHBoxLayout()
+        self.selected_device_label = QLabel("站位 · 尚未选择设备")
+        self.selected_device_label.setObjectName("sectionTitle")
+        heading.addWidget(self.selected_device_label)
+        heading.addStretch(1)
+        self.station_count_label = QLabel("0 个")
+        self.station_count_label.setProperty("metricChip", True)
+        heading.addWidget(self.station_count_label)
+        layout.addLayout(heading)
 
         query = QHBoxLayout()
         self.station_query_input = QLineEdit()
         self.station_query_input.setPlaceholderText("按站位编码或名称筛选")
         self.station_status_filter = QComboBox()
         self.station_status_filter.addItems(("全部状态", "启用", "停用"))
-        self.station_archived_check = QCheckBox("包含归档")
         query.addWidget(self.station_query_input, 1)
         query.addWidget(self.station_status_filter)
-        query.addWidget(self.station_archived_check)
         layout.addLayout(query)
 
-        single_form = QFormLayout()
+        self.station_table = self._table(("站位编码", "站位名称", "状态", "已引用"))
+        set_column_widths(self.station_table, (110, 170, 70, 70))
+        # "已引用" is troubleshooting information rather than a daily operation
+        # field.  Keep the data available to diagnostics, but do not spend scarce
+        # laptop table width on it by default.
+        self.station_table.setColumnHidden(3, True)
+        set_responsive_columns(
+            self.station_table,
+            stretch=(0, 1),
+            compact=(2, 3),
+        )
+        enable_table_layout(
+            self.station_table,
+            "master-data/stations",
+            self._layout_store,
+        )
+        layout.addWidget(self.station_table, 1)
+
+        layout.addWidget(section_heading("站位信息", "新增或修改当前设备下的单个站位"))
+        single_form = QGridLayout()
+        single_form.setContentsMargins(0, 0, 0, 0)
         self.station_code_input = QLineEdit()
         self.station_name_input = QLineEdit()
         self.add_station_button = QPushButton("新增站位")
-        single_form.addRow("站位编码", self.station_code_input)
-        single_form.addRow("站位名称", self.station_name_input)
-        single_form.addRow("", self.add_station_button)
+        self.add_station_button.setProperty("actionRole", "primary")
+        single_form.addWidget(QLabel("站位编码"), 0, 0)
+        single_form.addWidget(self.station_code_input, 0, 1)
+        single_form.addWidget(QLabel("站位名称"), 0, 2)
+        single_form.addWidget(self.station_name_input, 0, 3)
+        single_form.setColumnStretch(1, 1)
+        single_form.setColumnStretch(3, 1)
         layout.addLayout(single_form)
-
-        bulk_group = QGroupBox("批量新增")
-        bulk_form = QFormLayout(bulk_group)
-        self.bulk_prefix_input = QLineEdit("F-")
-        self.bulk_start_input = self._spin_box(1, 9999, 1)
-        self.bulk_end_input = self._spin_box(1, 9999, 60)
-        self.bulk_width_input = self._spin_box(1, 6, 2)
-        self.bulk_add_button = QPushButton("批量创建")
-        bulk_form.addRow("前缀", self.bulk_prefix_input)
-        bulk_form.addRow("起始编号", self.bulk_start_input)
-        bulk_form.addRow("结束编号", self.bulk_end_input)
-        bulk_form.addRow("数字宽度", self.bulk_width_input)
-        bulk_form.addRow("", self.bulk_add_button)
-        layout.addWidget(bulk_group)
 
         station_buttons = QHBoxLayout()
         self.update_station_button = QPushButton("保存修改")
-        self.enable_station_button = QPushButton("启用站位")
-        self.disable_station_button = QPushButton("停用站位")
-        self.delete_station_button = QPushButton("删除未引用")
-        self.archive_station_button = QPushButton("归档已引用")
+        self.update_station_button.setProperty("actionRole", "primary")
+        self.enable_station_button = QPushButton("启用")
+        self.enable_station_button.setProperty("actionRole", "success")
+        self.disable_station_button = QPushButton("停用")
+        self.disable_station_button.setProperty("actionRole", "danger")
+        station_buttons.addWidget(self.add_station_button)
         station_buttons.addWidget(self.update_station_button)
         station_buttons.addWidget(self.enable_station_button)
         station_buttons.addWidget(self.disable_station_button)
-        station_buttons.addWidget(self.delete_station_button)
-        station_buttons.addWidget(self.archive_station_button)
+        station_buttons.addStretch(1)
         layout.addLayout(station_buttons)
 
-        self.station_table = self._table(("站位编码", "站位名称", "状态", "已引用", "归档"))
-        layout.addWidget(self.station_table)
+        self.bulk_toggle_button = QPushButton("展开批量创建站位")
+        self.bulk_toggle_button.setCheckable(True)
+        self.bulk_toggle_button.setProperty("actionRole", "secondary")
+        layout.addWidget(self.bulk_toggle_button)
+        self.bulk_group = QGroupBox("批量创建站位")
+        self.bulk_group.setVisible(False)
+        bulk_form = QGridLayout(self.bulk_group)
+        bulk_form.setHorizontalSpacing(8)
+        bulk_form.setVerticalSpacing(6)
+        self.bulk_prefix_input = QLineEdit("F-")
+        self.bulk_start_input = self._spin_box(1, 9999, 1, minimum_digits=2)
+        self.bulk_end_input = self._spin_box(1, 9999, 60)
+        self.bulk_width_input = self._spin_box(1, 6, 2)
+        self.bulk_add_button = QPushButton("批量创建")
+        self.bulk_add_button.setProperty("actionRole", "primary")
+        bulk_form.addWidget(QLabel("前缀"), 0, 0)
+        bulk_form.addWidget(self.bulk_prefix_input, 0, 1)
+        bulk_form.addWidget(QLabel("数字宽度"), 0, 2)
+        bulk_form.addWidget(self.bulk_width_input, 0, 3)
+        bulk_form.addWidget(QLabel("起始编号"), 1, 0)
+        bulk_form.addWidget(self.bulk_start_input, 1, 1)
+        bulk_form.addWidget(QLabel("结束编号"), 1, 2)
+        bulk_form.addWidget(self.bulk_end_input, 1, 3)
+        self.bulk_add_button.setMinimumWidth(105)
+        bulk_form.addWidget(self.bulk_add_button, 0, 4, 2, 1)
+        bulk_form.setColumnStretch(1, 1)
+        bulk_form.setColumnStretch(3, 1)
+        layout.addWidget(self.bulk_group)
         return panel
 
     def _connect_signals(self) -> None:
@@ -261,22 +415,17 @@ class DeviceStationWidget(QWidget):
         self.update_device_button.clicked.connect(self._update_device)
         self.enable_device_button.clicked.connect(self._enable_device)
         self.disable_device_button.clicked.connect(self._disable_device)
-        self.delete_device_button.clicked.connect(self._delete_device)
-        self.archive_device_button.clicked.connect(self._archive_device)
         self.device_query_input.textChanged.connect(self._device_filter_changed)
         self.device_status_filter.currentIndexChanged.connect(self._device_filter_changed)
-        self.device_archived_check.toggled.connect(self._device_filter_changed)
         self.device_table.itemSelectionChanged.connect(self._device_selection_changed)
         self.add_station_button.clicked.connect(self._add_station)
         self.update_station_button.clicked.connect(self._update_station)
         self.enable_station_button.clicked.connect(self._enable_station)
         self.bulk_add_button.clicked.connect(self._bulk_add_stations)
+        self.bulk_toggle_button.toggled.connect(self._toggle_bulk_panel)
         self.disable_station_button.clicked.connect(self._disable_station)
-        self.delete_station_button.clicked.connect(self._delete_station)
-        self.archive_station_button.clicked.connect(self._archive_station)
         self.station_query_input.textChanged.connect(self._station_filter_changed)
         self.station_status_filter.currentIndexChanged.connect(self._station_filter_changed)
-        self.station_archived_check.toggled.connect(self._station_filter_changed)
         self.station_table.itemSelectionChanged.connect(self._station_selection_changed)
 
     @Slot(str)
@@ -297,7 +446,7 @@ class DeviceStationWidget(QWidget):
         devices = self._repository.search_devices(
             self.device_query_input.text(),
             enabled=self._status_filter(self.device_status_filter),
-            include_archived=self.device_archived_check.isChecked(),
+            include_archived=True,
         )
         self.device_table.blockSignals(True)
         self.device_table.setRowCount(len(devices))
@@ -309,11 +458,11 @@ class DeviceStationWidget(QWidget):
                     device.code,
                     device.name,
                     device.line,
-                    self._enabled_text(device.enabled),
-                    "是" if device.archived else "否",
+                    self._enabled_text(device.enabled and not device.archived),
                 ),
             )
         self.device_table.blockSignals(False)
+        self.device_count_label.setText(f"{len(devices)} 台")
 
         target_row = next(
             (row for row, device in enumerate(devices) if device.code == selected),
@@ -324,9 +473,14 @@ class DeviceStationWidget(QWidget):
         else:
             self.device_table.clearSelection()
             self._refresh_stations()
+        self._sync_device_state_buttons()
 
     @Slot()
     def _device_selection_changed(self) -> None:
+        # The station table can retain the same current row number while its
+        # model is replaced. Clear the editor first so a station belonging to
+        # the previous device is never presented under the new device.
+        self._clear_station_editor()
         row = self.device_table.currentRow()
         if row >= 0:
             for target, column in (
@@ -336,17 +490,25 @@ class DeviceStationWidget(QWidget):
             ):
                 item = self.device_table.item(row, column)
                 target.setText("" if item is None else item.text())
+        self._sync_device_state_buttons()
         self._refresh_stations()
 
     @Slot()
     def _station_selection_changed(self) -> None:
         row = self.station_table.currentRow()
         if row < 0:
+            self._clear_station_editor()
+            self._sync_station_state_buttons()
             return
         code = self.station_table.item(row, 0)
         name = self.station_table.item(row, 1)
         self.station_code_input.setText("" if code is None else code.text())
         self.station_name_input.setText("" if name is None else name.text())
+        self._sync_station_state_buttons()
+
+    def _clear_station_editor(self) -> None:
+        self.station_code_input.clear()
+        self.station_name_input.clear()
 
     @Slot()
     def _add_device(self) -> None:
@@ -371,6 +533,12 @@ class DeviceStationWidget(QWidget):
         device = self._require_selected_device()
         if device is None:
             return
+        if not self._confirm(
+            self,
+            "确认停用设备",
+            f"确认停用设备 {device}？\n该设备及其站位将不能用于新建扫码作业。",
+        ):
+            return
         try:
             self._repository.disable_device(device, **self._actor_kwargs())
         except MasterDataError as error:
@@ -385,17 +553,21 @@ class DeviceStationWidget(QWidget):
         if code is None:
             return
         try:
+            actor_kwargs = self._actor_kwargs()
+            was_disabled = self.enable_device_button.isEnabled()
             self._repository.update_device(
                 code,
                 name=self._required(self.device_name_input.text(), "设备名称"),
                 line=self.device_line_input.text(),
-                **self._actor_kwargs(),
+                **actor_kwargs,
             )
+            if was_disabled:
+                self._repository.enable_device(code, **actor_kwargs)
         except (MasterDataError, ValueError) as error:
             self._show_error(str(error))
             return
         self.refresh_devices(code)
-        self._show_success(f"已更新设备 {code}")
+        self._show_success(f"已更新并启用设备 {code}")
 
     @Slot()
     def _enable_device(self) -> None:
@@ -413,6 +585,18 @@ class DeviceStationWidget(QWidget):
         code = self._require_selected_device()
         if code is None:
             return
+        destructive = {
+            "delete_device": ("确认删除设备", "删除"),
+            "archive_device": ("确认归档设备", "归档"),
+        }.get(method_name)
+        if destructive is not None:
+            title, action = destructive
+            if not self._confirm(
+                self,
+                title,
+                f"确认{action}设备 {code}？此操作会改变设备的可用状态。",
+            ):
+                return
         try:
             getattr(self._repository, method_name)(code, **self._actor_kwargs())
         except (MasterDataError, ValueError) as error:
@@ -473,6 +657,12 @@ class DeviceStationWidget(QWidget):
         if selection is None:
             return
         device, station = selection
+        if not self._confirm(
+            self,
+            "确认停用站位",
+            f"确认停用站位 {station}（设备 {device}）？\n停用后不能用于新建扫码作业。",
+        ):
+            return
         try:
             self._repository.disable_station(device, station, **self._actor_kwargs())
         except MasterDataError as error:
@@ -487,6 +677,12 @@ class DeviceStationWidget(QWidget):
         if selection is None:
             return
         device, station = selection
+        if not self._confirm(
+            self,
+            "确认删除站位",
+            f"确认删除站位 {station}（设备 {device}）？",
+        ):
+            return
         try:
             self._repository.delete_station(device, station, **self._actor_kwargs())
         except MasterDataError as error:
@@ -502,17 +698,21 @@ class DeviceStationWidget(QWidget):
             return
         device, station = selection
         try:
+            actor_kwargs = self._actor_kwargs()
+            was_disabled = self.enable_station_button.isEnabled()
             self._repository.update_station(
                 device,
                 station,
                 name=self.station_name_input.text(),
-                **self._actor_kwargs(),
+                **actor_kwargs,
             )
+            if was_disabled:
+                self._repository.enable_station(device, station, **actor_kwargs)
         except (MasterDataError, ValueError) as error:
             self._show_error(str(error))
             return
         self._refresh_stations(station)
-        self._show_success(f"已更新站位 {device}/{station}")
+        self._show_success(f"已更新并启用站位 {device}/{station}")
 
     @Slot()
     def _enable_station(self) -> None:
@@ -527,6 +727,12 @@ class DeviceStationWidget(QWidget):
         if selection is None:
             return
         device, station = selection
+        if method_name == "archive_station" and not self._confirm(
+            self,
+            "确认归档站位",
+            f"确认归档站位 {station}（设备 {device}）？此操作会改变站位的可用状态。",
+        ):
+            return
         try:
             getattr(self._repository, method_name)(device, station, **self._actor_kwargs())
         except (MasterDataError, ValueError) as error:
@@ -536,18 +742,20 @@ class DeviceStationWidget(QWidget):
         self._show_success(f"{success} {device}/{station}")
 
     def _refresh_stations(self, preferred_code: str | None = None) -> None:
+        self._clear_station_editor()
         device = self._current_device_code()
         if device is None:
-            self.selected_device_label.setText("当前设备：未选择")
+            self.selected_device_label.setText("站位 · 尚未选择设备")
             self.station_table.setRowCount(0)
+            self.station_count_label.setText("0 个")
             return
 
-        self.selected_device_label.setText(f"当前设备：{device}")
+        self.selected_device_label.setText(f"站位 · 当前设备 {device}")
         stations = self._repository.search_stations(
             device,
             self.station_query_input.text(),
             enabled=self._status_filter(self.station_status_filter),
-            include_archived=self.station_archived_check.isChecked(),
+            include_archived=True,
         )
         self.station_table.setRowCount(len(stations))
         for row, station in enumerate(stations):
@@ -557,19 +765,44 @@ class DeviceStationWidget(QWidget):
                 (
                     station.code,
                     station.name,
-                    self._enabled_text(station.enabled),
+                    self._enabled_text(station.enabled and not station.archived),
                     "是" if station.referenced else "否",
-                    "是" if station.archived else "否",
                 ),
             )
+        self.station_count_label.setText(f"{len(stations)} 个")
         target_row = next(
             (row for row, station in enumerate(stations) if station.code == preferred_code),
             0 if stations else -1,
         )
         if target_row >= 0:
             self.station_table.selectRow(target_row)
+            # Selecting row zero again after replacing the table contents may
+            # not emit a current-row change, so populate the editor explicitly.
+            self._station_selection_changed()
         else:
             self.station_table.clearSelection()
+            self._station_selection_changed()
+        self._sync_station_state_buttons()
+
+    def _sync_device_state_buttons(self) -> None:
+        row = self.device_table.currentRow()
+        item = self.device_table.item(row, 3) if row >= 0 else None
+        selected = item is not None
+        enabled = selected and item.text() == "启用"
+        self.enable_device_button.setEnabled(selected and not enabled)
+        self.disable_device_button.setEnabled(enabled)
+        self.enable_device_button.setVisible(selected and not enabled)
+        self.disable_device_button.setVisible(enabled)
+
+    def _sync_station_state_buttons(self) -> None:
+        row = self.station_table.currentRow()
+        item = self.station_table.item(row, 2) if row >= 0 else None
+        selected = item is not None
+        enabled = selected and item.text() == "启用"
+        self.enable_station_button.setEnabled(selected and not enabled)
+        self.disable_station_button.setEnabled(enabled)
+        self.enable_station_button.setVisible(selected and not enabled)
+        self.disable_station_button.setVisible(enabled)
 
     def _current_device_code(self) -> str | None:
         row = self.device_table.currentRow()
@@ -602,15 +835,16 @@ class DeviceStationWidget(QWidget):
         return device, station
 
     def _show_success(self, message: str) -> None:
-        self.status_label.setProperty("feedbackState", "success")
-        self.status_label.setStyleSheet("color: #18794e;")
-        self.status_label.setText(message)
+        show_notification(self.status_label, "success", message)
         self.master_data_changed.emit()
 
     def _show_error(self, message: str) -> None:
-        self.status_label.setProperty("feedbackState", "error")
-        self.status_label.setStyleSheet("color: #b42318;")
-        self.status_label.setText(message)
+        show_notification(self.status_label, "error", message, duration_ms=6500)
+
+    @Slot(bool)
+    def _toggle_bulk_panel(self, expanded: bool) -> None:
+        self.bulk_group.setVisible(expanded)
+        self.bulk_toggle_button.setText("收起批量创建站位" if expanded else "展开批量创建站位")
 
     @staticmethod
     def _required(value: str, label: str) -> str:
@@ -636,10 +870,11 @@ class DeviceStationWidget(QWidget):
     def _table(headers: tuple[str, ...]) -> QTableWidget:
         table = QTableWidget(0, len(headers))
         table.setHorizontalHeaderLabels(headers)
+        prepare_table(table)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.verticalHeader().setVisible(False)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         return table
 
     @staticmethod
@@ -648,8 +883,16 @@ class DeviceStationWidget(QWidget):
             table.setItem(row, column, QTableWidgetItem(value))
 
     @staticmethod
-    def _spin_box(minimum: int, maximum: int, value: int) -> QSpinBox:
-        spin_box = QSpinBox()
+    def _spin_box(
+        minimum: int,
+        maximum: int,
+        value: int,
+        *,
+        minimum_digits: int = 1,
+    ) -> LargeStepSpinBox:
+        spin_box = LargeStepSpinBox(minimum_digits=minimum_digits)
         spin_box.setRange(minimum, maximum)
         spin_box.setValue(value)
+        spin_box.setAccelerated(True)
+        spin_box.setMinimumHeight(38)
         return spin_box

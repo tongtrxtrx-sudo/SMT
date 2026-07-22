@@ -4,12 +4,14 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QDateTimeEdit
 
-from smt_guard.bom import BomDocument, Material, Product
+from smt_guard.bom import BomDocument, BomVersion, Material, Product
 from smt_guard.feedback import FeedbackTone, VoicePrompt
 from smt_guard.operator import OperatorSession
 from smt_guard.run import RunStatus
@@ -25,7 +27,7 @@ from smt_guard.sqlite import (
 from smt_guard.ui.audits import AuditLogWidget
 from smt_guard.ui.boms import BomManagementWidget
 from smt_guard.ui.configurations import ConfigurationManagementWidget
-from smt_guard.ui.runs import ProductionRunManagementWidget
+from smt_guard.ui.runs import RUN_STATUS_TEXT, ProductionRunManagementWidget
 from smt_guard.ui.scanning import ScanWidget
 
 
@@ -55,6 +57,31 @@ class ManagementPageTests(unittest.TestCase):
         else:
             raise RuntimeError("A non-GUI Qt application already exists")
 
+    def test_run_statuses_have_chinese_display_text(self) -> None:
+        self.assertEqual(
+            {
+                RunStatus.RUNNING: "运行中",
+                RunStatus.COMPLETED: "已完成",
+                RunStatus.INTERRUPTED: "已中断",
+            },
+            RUN_STATUS_TEXT,
+        )
+
+    def test_audit_display_localizes_actions_actors_and_json_fields(self) -> None:
+        self.assertEqual("删除", AuditLogWidget.ACTION_NAMES["DELETE"])
+        self.assertEqual("归档", AuditLogWidget.ACTION_NAMES["ARCHIVE"])
+        self.assertEqual("系统迁移", AuditLogWidget.display_actor("SYSTEM_MIGRATION"))
+        rendered = AuditLogWidget.format_changes(
+            '{"code": "SMT01", "enabled": false, "archived": true}'
+        )
+        self.assertIn("编码：SMT01", rendered)
+        self.assertIn("启用状态：否", rendered)
+        self.assertIn("已归档：是", rendered)
+        self.assertIn(
+            "站位数：5",
+            AuditLogWidget.format_changes('{"station_count": 5}'),
+        )
+
     def setUp(self) -> None:
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -66,105 +93,241 @@ class ManagementPageTests(unittest.TestCase):
         self.master = SqliteMasterDataRepository(self.connection)
         self.master.add_device("SMT-01", "Machine", "Line A", actor="OP-UI")
         self.master.add_station("SMT-01", "F-01", actor="OP-UI")
+        self.clock = lambda: datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
 
     @staticmethod
-    def document(material: str) -> BomDocument:
+    def document(*materials: str) -> BomDocument:
         return BomDocument(
             Product("501000087", "BOM", "Board BOM", "Board", "Main"),
-            {material: Material(material, "Part", "1206", "1", "Electronic")},
+            {
+                material: Material(material, "Part", "1206", "1", "Electronic")
+                for material in materials
+            },
         )
 
-    def import_bom(self, version: str, material: str) -> None:
+    def import_bom(self, version: str, material: str, *additional_materials: str) -> BomVersion:
         source = self.directory / f"{version}.xlsx"
         source.write_bytes(version.encode())
-        SqliteBomRepository(self.connection).import_document(
-            self.document(material),
+        return SqliteBomRepository(self.connection).import_document(
+            self.document(material, *additional_materials),
             source,
             version=version,
             operator="OP-UI",
             imported_at=datetime(2026, 7, 14, 9, 0, tzinfo=UTC),
         )
 
-    def test_bom_page_shows_provenance_compares_and_runs_lifecycle(self) -> None:
+    def test_bom_page_shows_provenance_compares_and_marks_current_version(self) -> None:
         self.import_bom("V1", "M-1")
         self.import_bom("V2", "M-2")
+        repository = SqliteBomRepository(self.connection)
+        repository.publish("501000087", "V2", actor="OP-UI")
+        repository.activate("501000087", "V2", actor="OP-UI")
         announcer = FakeAnnouncementSink()
         widget = BomManagementWidget(
-            SqliteBomRepository(self.connection),
+            repository,
             self.session.require,
             announcer=announcer,
         )
         self.addCleanup(widget.close)
+        widget.resize(1180, 700)
+        widget.show()
+        self.app.processEvents()
+
+        query_card = widget.product_filter.parentWidget()
+        assert query_card is not None
+        self.assertEqual(760, query_card.minimumWidth())
+        self.assertEqual(980, query_card.maximumWidth())
 
         self.assertEqual(2, widget.version_table.rowCount())
+        self.assertEqual(
+            {"当前版本", "历史版本"},
+            {widget.version_table.item(row, 2).text() for row in range(2)},  # type: ignore[union-attr]
+        )
+        self.assertEqual(
+            "版本定位",
+            widget.version_table.horizontalHeaderItem(2).text(),  # type: ignore[union-attr]
+        )
+        self.assertFalse(hasattr(widget, "activate_button"))
+        self.assertFalse(hasattr(widget, "disable_button"))
         self.assertIn("SHA-256", widget.detail_label.text())
-        sha_item = widget.version_table.item(0, 4)
-        assert sha_item is not None
-        self.assertEqual(sha_item.text(), sha_item.toolTip())
-        self.assertGreaterEqual(widget.version_table.columnWidth(1), 170)
+        self.assertIn("来源：", widget.detail_label.text())
+        self.assertIn("by OP-UI", widget.detail_label.text())
+        self.assertEqual(5, widget.version_table.columnCount())
+        self.assertEqual("物料数", widget.version_table.horizontalHeaderItem(3).text())  # type: ignore[union-attr]
+        self.assertFalse(widget.version_table.isColumnHidden(0))
+        self.assertFalse(widget.version_table.isColumnHidden(1))
+        self.assertTrue(widget.version_table.isColumnHidden(2))
+        self.assertFalse(widget.version_table.isColumnHidden(3))
+        self.assertTrue(widget.version_table.isColumnHidden(4))
+        self.assertGreaterEqual(widget.version_table.columnWidth(1), 150)
+        self.assertEqual(
+            0,
+            widget.version_table.horizontalScrollBar().maximum(),
+            msg=(
+                f"table={widget.version_table.width()} "
+                f"viewport={widget.version_table.viewport().width()} "
+                f"columns={[widget.version_table.columnWidth(i) for i in range(5)]}"
+            ),
+        )
+        self.assertEqual(0, widget.material_table.horizontalScrollBar().maximum())
+        self.assertEqual(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+            widget.version_table.horizontalScrollBarPolicy(),
+        )
+        self.assertEqual(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+            widget.material_table.horizontalScrollBarPolicy(),
+        )
         widget.compare_button.click()
         self.assertIn("M-2", widget.compare_label.text())
+        widget.version_table.selectRow(1)
+        self.assertIn("当前 BOM 版本", widget.lifecycle_hint_label.text())
+        self.assertEqual([], announcer.prompts)
 
-        widget.version_table.selectRow(0)
-        widget.publish_button.click()
-        widget.activate_button.click()
-        widget.obsolete_button.click()
-        widget.archive_button.click()
-        self.assertIn("已归档", widget.status_label.text())
-        self.assertEqual(
-            [
-                VoicePrompt.BOM_PUBLISHED,
-                VoicePrompt.BOM_ACTIVATED,
-                VoicePrompt.BOM_OBSOLETED,
-                VoicePrompt.BOM_ARCHIVED,
-            ],
-            announcer.prompts,
+    def test_bom_comparison_only_offers_versions_of_the_same_product(self) -> None:
+        first = self.import_bom("V1", "M-1")
+        self.import_bom("V2", "M-2")
+        other_source = self.directory / "other.xlsx"
+        other_source.write_bytes(b"other")
+        repository = SqliteBomRepository(self.connection)
+        repository.import_document(
+            BomDocument(
+                Product("OTHER-001", "BOM-O", "Other BOM", "Other", "Spec"),
+                {"O-1": Material("O-1", "Other", "0603", "1", "Other")},
+            ),
+            other_source,
+            version="O1",
+            operator="OP-UI",
+            imported_at=datetime(2026, 7, 14, 10, 0, tzinfo=UTC),
         )
+        widget = BomManagementWidget(repository, self.session.require)
+        self.addCleanup(widget.close)
 
-        widget.activate_button.click()
-        self.assertIn("启用前必须先发布 BOM", widget.status_label.text())
-        self.assertNotIn("must be published", widget.status_label.text())
-        self.assertEqual(VoicePrompt.LIFECYCLE_FAILED, announcer.prompts[-1])
+        first_index = widget.compare_first.findData(first.id)
+        self.assertGreaterEqual(first_index, 0)
+        widget.compare_first.setCurrentIndex(first_index)
+        self.assertEqual(1, widget.compare_second.count())
+        self.assertTrue(
+            all(
+                widget.compare_second.itemText(index).startswith("501000087 / ")
+                for index in range(widget.compare_second.count())
+            )
+        )
+        self.assertTrue(widget.compare_button.isEnabled())
+
+        other_index = widget.compare_first.findText("OTHER-001 / O1")
+        self.assertGreaterEqual(other_index, 0)
+        widget.compare_first.setCurrentIndex(other_index)
+        self.assertEqual(0, widget.compare_second.count())
+        self.assertFalse(widget.compare_button.isEnabled())
+        self.assertIn("暂无其他版本", widget.compare_label.text())
 
     def test_configuration_page_copies_edits_and_releases_new_version(self) -> None:
         repository = SqliteProductConfigurationRepository(self.connection)
+        bom = self.import_bom("BOM-V1", "M-1", "M-2")
         repository.save(
-            ProductConfiguration("501000087", "V1", {("SMT-01", "F-01"): "M-1"}),
+            ProductConfiguration(
+                "501000087",
+                "V1",
+                {("SMT-01", "F-01"): "M-1"},
+                bom.id,
+            ),
             actor="OP-UI",
         )
         announcer = FakeAnnouncementSink()
         widget = ConfigurationManagementWidget(
-            repository, self.session.require, announcer=announcer
+            repository,
+            self.session.require,
+            announcer=announcer,
         )
         self.addCleanup(widget.close)
+        widget.resize(1180, 700)
+        widget.show()
+        self.app.processEvents()
+        filter_card = widget.filter_input.parentWidget()
+        assert filter_card is not None
+        self.assertEqual(760, filter_card.minimumWidth())
+        self.assertEqual(980, filter_card.maximumWidth())
         version_item = widget.configuration_table.item(0, 1)
         assert version_item is not None
         self.assertEqual(version_item.text(), version_item.toolTip())
-        self.assertGreaterEqual(widget.configuration_table.columnWidth(1), 170)
+        self.assertEqual(5, widget.configuration_table.columnCount())
+        self.assertEqual("V1", widget.configuration_table.item(0, 1).text())  # type: ignore[union-attr]
+        self.assertEqual("启用", widget.configuration_table.item(0, 2).text())  # type: ignore[union-attr]
+        self.assertEqual("1", widget.configuration_table.item(0, 3).text())  # type: ignore[union-attr]
+        self.assertFalse(widget.configuration_table.isColumnHidden(0))
+        self.assertFalse(widget.configuration_table.isColumnHidden(1))
+        self.assertFalse(widget.configuration_table.isColumnHidden(2))
+        self.assertEqual("复制为草稿并编辑", widget.copy_button.text())
+        self.assertEqual("保存并校验", widget.save_draft_button.text())
+        self.assertFalse(widget.add_row_button.isEnabled())
+        self.assertFalse(widget.remove_row_button.isEnabled())
+        self.assertFalse(widget.save_draft_button.isEnabled())
+        self.assertIn("不能直接修改", widget.edit_hint_label.text())
+        self.assertFalse(widget.activate_button.isEnabled())
+        self.assertTrue(widget.disable_button.isEnabled())
         widget.new_version_input.setText("V2")
         widget.copy_button.click()
         self.assertEqual(2, widget.configuration_table.rowCount())
 
         widget.configuration_table.selectRow(1)
-        widget.assignment_table.item(0, 2).setText("M-2")  # type: ignore[union-attr]
+        self.assertTrue(widget.add_row_button.isEnabled())
+        self.assertTrue(widget.remove_row_button.isEnabled())
+        self.assertTrue(widget.save_draft_button.isEnabled())
+        self.assertIn("当前为草稿", widget.edit_hint_label.text())
+        self.assertTrue(widget.activate_button.isEnabled())
+        self.assertFalse(widget.disable_button.isEnabled())
+        widget.assignment_table.item(0, 1).setText("M-2")  # type: ignore[union-attr]
         widget.save_draft_button.click()
-        widget.publish_button.click()
         widget.activate_button.click()
-        widget.disable_button.click()
-        widget.archive_button.click()
+        self.assertFalse(widget.activate_button.isEnabled())
+        self.assertTrue(widget.disable_button.isEnabled())
+        with patch("smt_guard.ui.configurations.confirm_action", return_value=False):
+            widget.disable_button.click()
+        self.assertEqual("启用", widget.configuration_table.item(1, 2).text())  # type: ignore[union-attr]
+        with patch("smt_guard.ui.configurations.confirm_action", return_value=True):
+            widget.disable_button.click()
+        self.assertTrue(widget.activate_button.isEnabled())
+        self.assertFalse(widget.disable_button.isEnabled())
         self.assertEqual(
             "M-2",
             repository.get("501000087", "V2").required_material("SMT-01", "F-01"),
         )
         self.assertEqual(
+            bom.id,
+            repository.get("501000087", "V2").bom_version_id,
+        )
+        self.assertEqual(
             [
-                VoicePrompt.CONFIGURATION_PUBLISHED,
                 VoicePrompt.CONFIGURATION_ACTIVATED,
                 VoicePrompt.CONFIGURATION_DISABLED,
-                VoicePrompt.CONFIGURATION_ARCHIVED,
             ],
             announcer.prompts,
         )
+
+    def test_narrow_configuration_page_uses_dedicated_detail_view(self) -> None:
+        repository = SqliteProductConfigurationRepository(self.connection)
+        repository.save(
+            ProductConfiguration("501000087", "V1", {("SMT-01", "F-01"): "M-1"}),
+            actor="OP-UI",
+        )
+        widget = ConfigurationManagementWidget(repository, self.session.require)
+        self.addCleanup(widget.close)
+        widget.resize(900, 700)
+        widget.show()
+        self.app.processEvents()
+
+        self.assertTrue(widget.configuration_list_card.isVisibleTo(widget))
+        self.assertTrue(widget.configuration_detail_card.isHidden())
+        widget.configuration_table.cellClicked.emit(0, 0)
+        self.app.processEvents()
+        self.assertTrue(widget.configuration_list_card.isHidden())
+        self.assertTrue(widget.configuration_detail_card.isVisibleTo(widget))
+        self.assertTrue(widget.back_to_configurations_button.isVisibleTo(widget))
+
+        widget.back_to_configurations_button.click()
+        self.assertTrue(widget.configuration_list_card.isVisibleTo(widget))
+        self.assertTrue(widget.configuration_detail_card.isHidden())
 
     def test_run_and_audit_pages_filter_and_show_snapshot_details(self) -> None:
         configurations = SqliteProductConfigurationRepository(self.connection)
@@ -183,25 +346,90 @@ class ManagementPageTests(unittest.TestCase):
             interrupted_at=datetime(2026, 7, 14, 10, 1, tzinfo=UTC),
             reason="换线",
         )
-        run_widget = ProductionRunManagementWidget(runs)
+        run_widget = ProductionRunManagementWidget(runs, clock=self.clock)
         self.addCleanup(run_widget.close)
+        run_widget.resize(1180, 700)
+        run_widget.show()
+        self.app.processEvents()
         run_widget.status_combo.setCurrentIndex(3)
         run_widget.query_input.setText("RUN-UI")
         run_widget.refresh()
 
         run_id_item = run_widget.run_table.item(0, 0)
         assert run_id_item is not None
-        self.assertEqual("RUN-UI", run_id_item.toolTip())
-        self.assertGreaterEqual(run_widget.run_table.columnWidth(0), 220)
+        self.assertEqual("260714-001", run_id_item.text())
+        self.assertIn("RUN-UI", run_id_item.toolTip())
+        self.assertEqual(5, run_widget.run_table.columnCount())
+        product_version_header = run_widget.run_table.horizontalHeaderItem(1)
+        assert product_version_header is not None
+        self.assertEqual("产品 / 配置版本", product_version_header.text())
+        self.assertEqual("查询作业", run_widget.query_button.text())
+        self.assertLess(run_widget.query_button.x(), int(run_widget.width() * 0.75))
+        self.assertGreaterEqual(
+            run_widget.run_table.columnWidth(0),
+            128,
+            msg=(
+                f"splitter={run_widget.splitter.sizes()} "
+                f"table={run_widget.run_table.width()} "
+                f"viewport={run_widget.run_table.viewport().width()} "
+                f"columns={[run_widget.run_table.columnWidth(i) for i in range(5)]}"
+            ),
+        )
+        self.assertFalse(
+            run_widget.run_table.isColumnHidden(2),
+            msg=(
+                f"splitter={run_widget.splitter.sizes()} "
+                f"table={run_widget.run_table.width()} "
+                f"viewport={run_widget.run_table.viewport().width()}"
+            ),
+        )
+        self.assertTrue(run_widget.run_table.isColumnHidden(3))
+        self.assertFalse(run_widget.run_table.isColumnHidden(4))
+        self.assertAlmostEqual(
+            run_widget.splitter.sizes()[0],
+            run_widget.splitter.sizes()[1],
+            delta=30,
+        )
+        self.assertEqual(0, run_widget.run_table.horizontalScrollBar().maximum())
+        started_at_item = run_widget.run_table.item(0, 4)
+        assert started_at_item is not None
+        self.assertEqual("07-14 10:00", started_at_item.text())
+        self.assertIn("2026-07-14 10:00", started_at_item.toolTip())
+        self.assertEqual(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+            run_widget.run_table.horizontalScrollBarPolicy(),
+        )
+        self.assertIn("更新于 12:00", run_widget.status_label.text())
 
         resumed: list[str] = []
         run_widget.resume_requested.connect(resumed.append)
         run_widget.resume_button.click()
         self.assertEqual(["RUN-UI"], resumed)
         self.assertEqual(1, run_widget.station_table.rowCount())
-        self.assertIn("OP-UI", run_widget.snapshot_label.text())
+        self.assertEqual(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+            run_widget.station_table.horizontalScrollBarPolicy(),
+        )
+        self.assertEqual(0, run_widget.station_table.horizontalScrollBar().maximum())
+        status_item = run_widget.run_table.item(0, 2)
+        assert status_item is not None
+        self.assertEqual("已中断", status_item.text())
+        self.assertFalse(hasattr(run_widget, "snapshot_label"))
+        self.assertEqual("260714-001", run_widget.run_summary_title.text())
+        self.assertEqual("已中断", run_widget.run_status_chip.text())
+        self.assertEqual("0 / 1", run_widget.run_progress_chip.text())
+        self.assertEqual("NG 0", run_widget.run_ng_chip.text())
+        self.assertIn("操作员：OP-UI", run_widget.run_summary_title.toolTip())
+        self.assertIn("结束/中断：2026-07-14 10:01", run_widget.run_summary_title.toolTip())
+        self.assertIn("中断原因：换线", run_widget.run_summary_title.toolTip())
+        self.assertIsInstance(run_widget.started_from_input, QDateTimeEdit)
+        self.assertEqual("yyyy-MM-dd HH:mm", run_widget.started_from_input.displayFormat())
+        run_widget.date_range.today_button.click()
+        self.assertEqual(0, run_widget.run_table.rowCount())
+        run_widget.date_range.seven_days_button.click()
+        self.assertEqual(1, run_widget.run_table.rowCount())
 
-        audit_widget = AuditLogWidget(SqliteAuditRepository(self.connection))
+        audit_widget = AuditLogWidget(SqliteAuditRepository(self.connection), clock=self.clock)
         self.addCleanup(audit_widget.close)
         audit_widget.actor_input.setText("OP-UI")
         audit_widget.entity_type_input.setText("PRODUCTION_RUN")
@@ -209,20 +437,26 @@ class ManagementPageTests(unittest.TestCase):
         self.assertEqual(2, audit_widget.audit_table.rowCount())
         first_action = audit_widget.audit_table.item(0, 4)
         assert first_action is not None
-        self.assertEqual("INTERRUPT", first_action.text())
+        self.assertEqual("中断", first_action.text())
+        self.assertEqual("INTERRUPT", first_action.toolTip())
         entity_key = audit_widget.audit_table.item(0, 3)
         assert entity_key is not None
         self.assertEqual(entity_key.text(), entity_key.toolTip())
-        self.assertGreaterEqual(audit_widget.audit_table.columnWidth(3), 240)
+        self.assertTrue(audit_widget.audit_table.isColumnHidden(6))
+        self.assertTrue(audit_widget.audit_table.isColumnHidden(7))
+        self.assertIn("作业记录", audit_widget.detail_title.text())
+        self.assertIn("RUN-UI", audit_widget.detail_meta.text())
         self.assertEqual(RunStatus.INTERRUPTED, runs.get("RUN-UI").status)
-
-        audit_widget.started_from_input.setText("not-a-time")
-        audit_widget.refresh()
-        self.assertIn("无效 ISO 时间", audit_widget.status_label.text())
+        self.assertIsInstance(audit_widget.started_from_input, QDateTimeEdit)
+        self.assertNotIn("ISO", audit_widget.status_label.text())
+        self.assertIn("更新于 12:00", audit_widget.status_label.text())
 
     def test_audit_page_distinguishes_unqueried_zero_and_refreshes_when_activated(self) -> None:
         repository = SqliteAuditRepository(self.connection)
-        widget = AuditLogWidget(repository)
+        widget = AuditLogWidget(
+            repository,
+            clock=lambda: datetime.now(UTC),
+        )
         self.addCleanup(widget.close)
         self.assertIn("尚未查询", widget.status_label.text())
 
@@ -240,7 +474,7 @@ class ManagementPageTests(unittest.TestCase):
         self.assertGreater(widget.audit_table.rowCount(), 0)
         self.assertIn("查询完成：", widget.status_label.text())
 
-    def test_run_refresh_renders_new_first_row_even_when_row_zero_stays_selected(self) -> None:
+    def test_run_refresh_preserves_the_selected_job_when_it_still_exists(self) -> None:
         configurations = SqliteProductConfigurationRepository(self.connection)
         first_configuration = ProductConfiguration("501000087", "V1", {("SMT-01", "F-01"): "M-1"})
         configurations.save(first_configuration, actor="OP-UI")
@@ -257,10 +491,10 @@ class ManagementPageTests(unittest.TestCase):
             interrupted_at=datetime(2026, 7, 14, 10, 1, tzinfo=UTC),
             reason="换线",
         )
-        widget = ProductionRunManagementWidget(runs)
+        widget = ProductionRunManagementWidget(runs, clock=self.clock)
         self.addCleanup(widget.close)
         self.assertTrue(widget.resume_button.isEnabled())
-        self.assertIn("OP-OLD", widget.snapshot_label.text())
+        self.assertIn("操作员：OP-OLD", widget.run_summary_title.toolTip())
 
         second_configuration = ProductConfiguration("501000087", "V2", {("SMT-01", "F-01"): "M-2"})
         configurations.save(second_configuration, actor="OP-NEW")
@@ -273,13 +507,13 @@ class ManagementPageTests(unittest.TestCase):
 
         widget.refresh()
 
-        self.assertEqual("RUN-NEW", widget.run_table.item(0, 0).text())  # type: ignore[union-attr]
-        self.assertEqual(0, widget.run_table.currentRow())
-        self.assertIn("501000087/V2", widget.snapshot_label.text())
-        self.assertIn("OP-NEW", widget.snapshot_label.text())
-        self.assertFalse(widget.resume_button.isEnabled())
-        self.assertTrue(widget.interrupt_button.isEnabled())
-        self.assertEqual("M-2", widget.station_table.item(0, 2).text())  # type: ignore[union-attr]
+        self.assertEqual("260714-002", widget.run_table.item(0, 0).text())  # type: ignore[union-attr]
+        self.assertEqual(1, widget.run_table.currentRow())
+        self.assertIn("501000087/V1", widget.run_summary_title.toolTip())
+        self.assertIn("操作员：OP-OLD", widget.run_summary_title.toolTip())
+        self.assertTrue(widget.resume_button.isEnabled())
+        self.assertFalse(widget.interrupt_button.isEnabled())
+        self.assertEqual("M-1", widget.station_table.item(0, 2).text())  # type: ignore[union-attr]
 
         widget.query_input.setText("NO-SUCH-RUN")
         widget.refresh()
@@ -288,6 +522,44 @@ class ManagementPageTests(unittest.TestCase):
         self.assertEqual(0, widget.station_table.rowCount())
         self.assertFalse(widget.resume_button.isEnabled())
         self.assertFalse(widget.interrupt_button.isEnabled())
+
+    def test_narrow_run_page_uses_dedicated_detail_view_with_back_action(self) -> None:
+        configuration = ProductConfiguration("501000087", "V1", {("SMT-01", "F-01"): "M-1"})
+        SqliteProductConfigurationRepository(self.connection).save(configuration, actor="OP-UI")
+        runs = SqliteProductionRunRepository(self.connection)
+        runs.start(
+            "RUN-NARROW",
+            configuration,
+            operator="OP-UI",
+            started_at=datetime(2026, 7, 14, 10, 0, tzinfo=UTC),
+        )
+        widget = ProductionRunManagementWidget(runs, clock=self.clock)
+        self.addCleanup(widget.close)
+        widget.resize(900, 700)
+        widget.show()
+        self.app.processEvents()
+
+        self.assertTrue(widget.run_list_card.isVisibleTo(widget))
+        self.assertTrue(widget.run_detail_card.isHidden())
+        widget.run_table.cellClicked.emit(0, 0)
+        self.app.processEvents()
+        self.assertTrue(widget.run_list_card.isHidden())
+        self.assertTrue(widget.run_detail_card.isVisibleTo(widget))
+        self.assertTrue(widget.back_to_runs_button.isVisibleTo(widget))
+
+        widget.back_to_runs_button.click()
+        self.assertTrue(widget.run_list_card.isVisibleTo(widget))
+        self.assertTrue(widget.run_detail_card.isHidden())
+
+        interrupted: list[tuple[str, str]] = []
+
+        def record_interrupt(run_id: str, reason: str) -> None:
+            interrupted.append((run_id, reason))
+
+        widget.interrupt_requested.connect(record_interrupt)
+        with patch("smt_guard.ui.runs.confirm_action", return_value=False):
+            widget.interrupt_button.click()
+        self.assertEqual([], interrupted)
 
     def test_scanner_resumes_and_interrupts_persisted_runs(self) -> None:
         configurations = SqliteProductConfigurationRepository(self.connection)
@@ -319,9 +591,9 @@ class ManagementPageTests(unittest.TestCase):
         self.assertFalse(widget.scan_input.isEnabled())
         self.assertEqual(
             [
-                VoicePrompt.RUN_STARTED,
+                VoicePrompt.SCAN_STATION,
                 VoicePrompt.RUN_INTERRUPTED,
-                VoicePrompt.RUN_RESUMED,
+                VoicePrompt.SCAN_STATION,
                 VoicePrompt.RUN_INTERRUPTED,
             ],
             announcer.prompts,
@@ -335,9 +607,15 @@ class ManagementPageTests(unittest.TestCase):
             announcer=announcer,
         )
         self.addCleanup(bom_widget.close)
-        bom_widget.publish_button.click()
-        bom_widget.compare_button.click()
-        self.assertIn("请选择", bom_widget.status_label.text())
+        self.assertFalse(hasattr(bom_widget, "activate_button"))
+        self.assertFalse(hasattr(bom_widget, "disable_button"))
+        bom_import_requests: list[bool] = []
+        bom_widget.import_requested.connect(lambda: bom_import_requests.append(True))
+        self.assertFalse(bom_widget.import_button.isHidden())
+        bom_widget.import_button.click()
+        self.assertEqual([True], bom_import_requests)
+        self.assertFalse(bom_widget.compare_button.isEnabled())
+        self.assertIn("暂无其他版本", bom_widget.compare_label.text())
 
         config_widget = ConfigurationManagementWidget(
             SqliteProductConfigurationRepository(self.connection),
@@ -345,25 +623,29 @@ class ManagementPageTests(unittest.TestCase):
             announcer=announcer,
         )
         self.addCleanup(config_widget.close)
+        self.assertFalse(config_widget.activate_button.isEnabled())
+        self.assertFalse(config_widget.disable_button.isEnabled())
+        configuration_import_requests: list[bool] = []
+        config_widget.import_requested.connect(lambda: configuration_import_requests.append(True))
+        self.assertFalse(config_widget.import_button.isHidden())
+        config_widget.import_button.click()
+        self.assertEqual([True], configuration_import_requests)
         config_widget.copy_button.click()
-        config_widget.publish_button.click()
+        config_widget.activate_button.click()
         config_widget.validate_button.click()
         config_widget.save_draft_button.click()
         self.assertIn("产品配置", config_widget.status_label.text())
         self.assertEqual(
-            [
-                VoicePrompt.LIFECYCLE_FAILED,
-                VoicePrompt.LIFECYCLE_FAILED,
-                VoicePrompt.LIFECYCLE_FAILED,
-            ],
+            [VoicePrompt.LIFECYCLE_FAILED],
             announcer.prompts,
         )
 
-        run_widget = ProductionRunManagementWidget(SqliteProductionRunRepository(self.connection))
+        run_widget = ProductionRunManagementWidget(
+            SqliteProductionRunRepository(self.connection), clock=self.clock
+        )
         self.addCleanup(run_widget.close)
-        run_widget.started_from_input.setText("invalid")
-        run_widget.refresh()
-        self.assertIn("无效 ISO 时间", run_widget.status_label.text())
+        self.assertIsInstance(run_widget.started_to_input, QDateTimeEdit)
+        self.assertEqual("yyyy-MM-dd HH:mm", run_widget.started_to_input.displayFormat())
 
 
 if __name__ == "__main__":

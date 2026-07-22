@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
-from smt_guard.bom import BomDocument, BomImporter, BomVersion, WorkbookReader
+from smt_guard.bom import BomDocument, BomImporter, BomStatus, BomVersion, WorkbookReader
 from smt_guard.configuration import (
     ImportValidationError,
     MasterDataLookup,
@@ -38,12 +38,20 @@ class BomSink(Protocol):
         """Persist an imported BOM as a new immutable draft version."""
         ...
 
+    def publish(self, product_code: str, version: str, *, actor: str) -> BomVersion:
+        """Publish one validated draft BOM."""
+        ...
+
+    def activate(self, product_code: str, version: str, *, actor: str) -> BomVersion:
+        """Make one BOM the active version for its product."""
+        ...
+
 
 @dataclass(frozen=True)
 class ImportResult:
     """Imported BOM and configuration data used by the preview screen."""
 
-    document: BomDocument
+    document: BomDocument | None
     configuration: ProductConfiguration
 
 
@@ -67,12 +75,39 @@ class ConfigurationImportService:
         self._operator = operator
         self._operator_provider = operator_provider
         self._document: BomDocument | None = None
-        self._bom_version_id: int | None = None
+        self._bom_version: BomVersion | None = None
+
+    def import_configuration(
+        self,
+        station_path: Path,
+        *,
+        product_code: str,
+        version: str,
+        station_sheet: str,
+    ) -> ImportResult:
+        """Import a station/material configuration without requiring a BOM file."""
+        normalized_product = product_code.strip()
+        normalized_version = version.strip()
+        normalized_sheet = station_sheet.strip()
+        if not normalized_product:
+            raise ImportValidationError("Product code is required")
+        if not normalized_version:
+            raise ImportValidationError("Product configuration version is required")
+
+        station_rows = self._reader.read_sheet(station_path, normalized_sheet)
+        configuration = ProductConfigurationBuilder(self._master_data).build(
+            normalized_product,
+            normalized_version,
+            {},
+            station_rows,
+        )
+        self._configurations.save(configuration, actor=self._current_operator())
+        return ImportResult(None, configuration)
 
     def import_bom(self, bom_path: Path, *, version: str | None = None) -> BomDocument:
         """Load and retain one validated BOM for a later station-table import."""
         self._document = None
-        self._bom_version_id = None
+        self._bom_version = None
         document = BomImporter(self._reader).import_xlsx(bom_path)
         if self._boms is not None:
             operator = self._current_operator()
@@ -83,7 +118,7 @@ class ConfigurationImportService:
                 imported_at=datetime.now(UTC),
                 version=version,
             )
-            self._bom_version_id = stored.id
+            self._bom_version = stored
         self._document = document
         return document
 
@@ -113,8 +148,26 @@ class ConfigurationImportService:
             document.materials,
             station_rows,
         )
-        configuration = replace(configuration, bom_version_id=self._bom_version_id)
-        self._configurations.save(configuration, actor=self._current_operator())
+        stored_bom = self._bom_version
+        configuration = replace(
+            configuration,
+            bom_version_id=None if stored_bom is None else stored_bom.id,
+        )
+        actor = self._current_operator()
+        self._configurations.save(configuration, actor=actor)
+        if self._boms is not None and stored_bom is not None:
+            if stored_bom.status is BomStatus.DRAFT:
+                stored_bom = self._boms.publish(
+                    document.product.material_code,
+                    stored_bom.version,
+                    actor=actor,
+                )
+            if stored_bom.status is not BomStatus.ACTIVE:
+                self._boms.activate(
+                    document.product.material_code,
+                    stored_bom.version,
+                    actor=actor,
+                )
         return ImportResult(document, configuration)
 
     def _current_operator(self) -> str:

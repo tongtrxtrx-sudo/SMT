@@ -19,7 +19,7 @@ from smt_guard.feedback import (
     SilentAnnouncementSink,
 )
 from smt_guard.importing import ConfigurationImportService
-from smt_guard.operator import OperatorSession
+from smt_guard.operator import LastOperatorStore, OperatorSession
 from smt_guard.platform import (
     RunIdGenerator,
     WindowsAudioSink,
@@ -28,14 +28,12 @@ from smt_guard.platform import (
 )
 from smt_guard.sqlite import (
     SqliteAuditRepository,
-    SqliteBomRepository,
     SqliteDatabase,
     SqliteMasterDataRepository,
     SqliteProductConfigurationRepository,
     SqliteProductionRunRepository,
 )
 from smt_guard.ui.audits import AuditLogWidget
-from smt_guard.ui.boms import BomManagementWidget
 from smt_guard.ui.configurations import ConfigurationManagementWidget
 from smt_guard.ui.importing import ConfigurationImportWidget
 from smt_guard.ui.main_window import MainWindow
@@ -44,6 +42,7 @@ from smt_guard.ui.operator import OperatorSessionWidget
 from smt_guard.ui.records import RecordQueryWidget
 from smt_guard.ui.runs import ProductionRunManagementWidget
 from smt_guard.ui.scanning import ScanWidget
+from smt_guard.ui.tables import UiLayoutStore
 from smt_guard.xlsx_reader import OpenpyxlWorkbookReader
 
 
@@ -57,7 +56,6 @@ class ApplicationRuntime:
         master_data: SqliteMasterDataRepository,
         configurations: SqliteProductConfigurationRepository,
         runs: SqliteProductionRunRepository,
-        boms: SqliteBomRepository,
         audits: SqliteAuditRepository,
         operator_session: OperatorSession,
         scan_widget: ScanWidget,
@@ -68,7 +66,6 @@ class ApplicationRuntime:
         self.master_data = master_data
         self.configurations = configurations
         self.runs = runs
-        self.boms = boms
         self.audits = audits
         self.operator_session = operator_session
         self.scan_widget = scan_widget
@@ -102,24 +99,29 @@ def create_runtime(
         SqliteDatabase(connection).initialize()
         master_data = SqliteMasterDataRepository(connection)
         configurations = SqliteProductConfigurationRepository(connection)
-        boms = SqliteBomRepository(connection)
         runs = SqliteProductionRunRepository(connection)
         audits = SqliteAuditRepository(connection)
-        operator_session = OperatorSession()
+        operator_store = LastOperatorStore(data_directory / "last_operator.txt")
+        operator_session = OperatorSession(operator_store.load())
+        layout_store = UiLayoutStore(data_directory / "ui_layout.json")
         import_service = ConfigurationImportService(
             OpenpyxlWorkbookReader(),
             master_data,
             configurations,
-            boms,
             operator_provider=operator_session.require,
         )
 
         announcer = announcements or SilentAnnouncementSink()
-        operator_widget = OperatorSessionWidget(operator_session, announcer=announcer)
         master_data_widget = DeviceStationWidget(
-            master_data, operator_provider=operator_session.require
+            master_data,
+            operator_provider=operator_session.require,
+            layout_store=layout_store,
         )
-        import_widget = ConfigurationImportWidget(import_service, announcer=announcer)
+        import_widget = ConfigurationImportWidget(
+            import_service,
+            announcer=announcer,
+            layout_store=layout_store,
+        )
         scan_widget = ScanWidget(
             configurations,
             runs,
@@ -129,39 +131,56 @@ def create_runtime(
             runs=runs,
             operator_provider=operator_session.require,
             announcer=announcer,
+            layout_store=layout_store,
         )
-        bom_widget = BomManagementWidget(
-            boms, operator_session.require, announcer=announcer
+        operator_widget = OperatorSessionWidget(
+            operator_session,
+            announcer=announcer,
+            change_guard=scan_widget.confirm_operator_change,
         )
         configuration_widget = ConfigurationManagementWidget(
-            configurations, operator_session.require, announcer=announcer
+            configurations,
+            operator_session.require,
+            announcer=announcer,
+            master_data=master_data,
+            layout_store=layout_store,
         )
-        run_widget = ProductionRunManagementWidget(runs)
+        run_widget = ProductionRunManagementWidget(
+            runs,
+            exporter=CsvRecordExporter(runs),
+            announcer=announcer,
+            clock=clock,
+            layout_store=layout_store,
+        )
         records_widget = RecordQueryWidget(
-            runs, CsvRecordExporter(runs), announcer=announcer
+            runs,
+            CsvRecordExporter(runs),
+            announcer=announcer,
+            layout_store=layout_store,
         )
-        audit_widget = AuditLogWidget(audits)
+        audit_widget = AuditLogWidget(audits, clock=clock, layout_store=layout_store)
         import_widget.import_completed.connect(scan_widget.refresh_configurations)
         import_widget.import_completed.connect(configuration_widget.refresh)
-        import_widget.bom_imported.connect(bom_widget.refresh)
         master_data_widget.master_data_changed.connect(scan_widget.refresh_configurations)
         master_data_widget.master_data_changed.connect(configuration_widget.refresh)
-        configuration_widget.configurations_changed.connect(
-            scan_widget.refresh_configurations
-        )
+        configuration_widget.configurations_changed.connect(scan_widget.refresh_configurations)
         scan_widget.run_changed.connect(run_widget.refresh)
         window = MainWindow(
             scan_widget,
             master_data_widget,
             import_widget,
-            bom_widget,
             configuration_widget,
             run_widget,
             records_widget,
             audit_widget,
             operator_widget,
+            layout_store=layout_store,
         )
         run_widget.start_requested.connect(lambda: window.tab_widget.setCurrentIndex(0))
+        for import_requester in (scan_widget, configuration_widget):
+            import_requester.import_requested.connect(
+                lambda: window.tab_widget.setCurrentIndex(window.IMPORT_TAB)
+            )
 
         def resume_run(run_id: str) -> None:
             scan_widget.resume_run(run_id)
@@ -174,6 +193,12 @@ def create_runtime(
             scan_widget.interrupt_active_run("切换操作员")
 
         operator_widget.operator_changed.connect(operator_changed)
+
+        # Keep the preference store alive through the signal closure for the full UI lifetime.
+        def save_operator(operator: str) -> None:
+            operator_store.save(operator)
+
+        operator_widget.operator_changed.connect(save_operator)
     except Exception:
         connection.close()
         raise
@@ -184,7 +209,6 @@ def create_runtime(
         master_data,
         configurations,
         runs,
-        boms,
         audits,
         operator_session,
         scan_widget,
@@ -223,7 +247,7 @@ def _create_chinese_speech_engine(engine_name: str) -> QTextToSpeech | None:
         if chinese_voice is None:
             return None
         engine.setVoice(chinese_voice)
-        engine.setRate(-0.1)
+        engine.setRate(-0.3)
         engine.setVolume(1.0)
     except Exception:
         return None
@@ -242,7 +266,13 @@ def _create_windows_announcer() -> AnnouncementSink:
         engine = _create_chinese_speech_engine(engine_name)
         if engine is None:
             continue
-        return WindowsSpeechSink(engine.say, stopper=engine.stop, engine_owner=engine)
+        return WindowsSpeechSink(
+            engine.say,
+            stopper=engine.stop,
+            rate_setter=engine.setRate,
+            volume_setter=engine.setVolume,
+            engine_owner=engine,
+        )
     return SilentAnnouncementSink()
 
 
@@ -282,7 +312,9 @@ def main(
     if smoke_test:
         runtime.close()
         return 0
-    runtime.window.show()
+    # Shop-floor terminals are normally dedicated displays; start maximized so the
+    # responsive page layouts can use the available screen without an extra click.
+    runtime.window.showMaximized()
     try:
         return application.exec()
     finally:

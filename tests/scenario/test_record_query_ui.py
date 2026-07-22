@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from smt_guard.exporter import CsvRecordExporter
@@ -79,7 +80,25 @@ class RecordQueryWidgetTests(unittest.TestCase):
         run_id = self.widget.record_table.item(0, 2)
         assert run_id is not None
         self.assertEqual("RUN-1", run_id.toolTip())
-        self.assertGreaterEqual(self.widget.record_table.columnWidth(2), 220)
+        self.assertTrue(self.widget.record_table.isColumnHidden(2))
+        self.assertEqual(
+            [1, 5, 6, 7, 8, 9, 10],
+            [
+                column
+                for column in range(self.widget.record_table.columnCount())
+                if not self.widget.record_table.isColumnHidden(column)
+            ],
+        )
+        self.widget.resize(980, 700)
+        self.widget.show()
+        self.app.processEvents()
+        self.assertEqual(0, self.widget.record_table.horizontalScrollBar().maximum())
+        self.assertEqual(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+            self.widget.record_table.horizontalScrollBarPolicy(),
+        )
+        self.assertIn("RUN-1", self.widget.result_title.text())
+        self.assertEqual("2 条", self.widget.total_chip.text())
         self.assertIn("2 条", self.widget.status_label.text())
 
     def test_shows_clear_empty_result(self) -> None:
@@ -89,6 +108,7 @@ class RecordQueryWidgetTests(unittest.TestCase):
 
         self.assertEqual(0, self.widget.record_table.rowCount())
         self.assertIn("未找到", self.widget.status_label.text())
+        self.assertIn("没有扫码记录", self.widget.empty_state.title_label.text())
 
     def test_exports_only_selected_run_to_temporary_csv(self) -> None:
         with TemporaryDirectory() as directory:
@@ -102,7 +122,7 @@ class RecordQueryWidgetTests(unittest.TestCase):
                 rows = list(csv.DictReader(stream))
 
         self.assertEqual(2, len(rows))
-        self.assertEqual({"RUN-1"}, {row["运行编号"] for row in rows})
+        self.assertEqual({"RUN-1"}, {row["内部运行编号"] for row in rows})
         self.assertIn("导出", self.widget.status_label.text())
         self.assertEqual([VoicePrompt.RECORDS_EXPORTED], self.announcements.prompts)
 

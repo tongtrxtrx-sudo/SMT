@@ -40,7 +40,8 @@ class SecurityBoundaryTests(unittest.TestCase):
             with path.open("r", encoding="utf-8-sig", newline="") as stream:
                 row = next(csv.DictReader(stream))
 
-        self.assertEqual("'=RUN()", row["运行编号"])
+        self.assertEqual("'=RUN()", row["作业号"])
+        self.assertEqual("'=RUN()", row["内部运行编号"])
         self.assertEqual("'=HYPERLINK(\"bad\")", row["扫码物料"])
         self.assertEqual("013000081", row["要求物料"])
 

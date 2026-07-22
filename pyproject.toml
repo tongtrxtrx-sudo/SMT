@@ -7,10 +7,12 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "openpyxl>=3.1.5,<4",
     "pyside6>=6.8,<7",
+    "reportlab>=4.4,<5",
 ]
 
 [project.scripts]
 smt-guard = "smt_guard.app:main"
+smt-receipt-labels = "smt_guard.receipt_label_app:main"
 
 [dependency-groups]
 dev = [

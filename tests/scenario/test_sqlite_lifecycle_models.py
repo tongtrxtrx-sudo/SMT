@@ -81,6 +81,9 @@ class SqliteLifecycleModelTests(unittest.TestCase):
 
         self.assertEqual(ConfigurationStatus.ARCHIVED, archived.status)
         self.assertEqual([], repository.list_configurations())
+        restored = repository.activate("501000087", "V1", actor="ENGINEER")
+        self.assertEqual(ConfigurationStatus.ACTIVE, restored.status)
+        self.assertEqual([configuration], repository.list_configurations())
 
     def test_failed_configuration_save_has_no_reference_side_effect(self) -> None:
         repository = SqliteProductConfigurationRepository(self.connection)
@@ -181,9 +184,11 @@ class SqliteLifecycleModelTests(unittest.TestCase):
         repository.activate("501000087", "V2")
         obsolete = repository.obsolete("501000087", "V2")
         archived = repository.archive("501000087", "V2")
+        restored = repository.activate("501000087", "V2")
 
         self.assertEqual(BomStatus.OBSOLETE, obsolete.status)
         self.assertEqual(BomStatus.ARCHIVED, archived.status)
+        self.assertEqual(BomStatus.ACTIVE, restored.status)
         self.assertEqual(["V1", "V2"], [item.version for item in repository.list_versions()])
 
     def test_copies_released_configuration_into_new_draft_version(self) -> None:

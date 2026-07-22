@@ -42,6 +42,7 @@ class RecordExportTests(unittest.TestCase):
 
         self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))
         self.assertEqual(1, len(rows))
+        self.assertEqual("RUN-1", rows[0]["作业号"])
         self.assertEqual("013000081", rows[0]["要求物料"])
 
     def test_empty_run_exports_headers(self) -> None:
@@ -53,7 +54,7 @@ class RecordExportTests(unittest.TestCase):
                 rows = list(reader)
 
         self.assertEqual(1, len(rows))
-        self.assertIn("运行编号", rows[0])
+        self.assertIn("内部运行编号", rows[0])
         self.assertIn("结果", rows[0])
 
     def test_special_text_is_quoted_and_round_trips(self) -> None:
@@ -78,7 +79,7 @@ class RecordExportTests(unittest.TestCase):
                 rows = list(csv.DictReader(stream))
 
         self.assertEqual(1, len(rows))
-        self.assertEqual("RUN-1", rows[0]["运行编号"])
+        self.assertEqual("RUN-1", rows[0]["内部运行编号"])
         self.assertEqual("F-01", rows[0]["站位编码"])
 
 

@@ -251,4 +251,57 @@ MIGRATIONS = (
             "Lifecycle migration adds immutable operational records; downgrade would lose them."
         ),
     ),
+    Migration(
+        3,
+        "globally_unique_station_codes",
+        """
+        CREATE UNIQUE INDEX stations_code_unique ON stations(code);
+        """,
+        down_sql="DROP INDEX IF EXISTS stations_code_unique;",
+    ),
+    Migration(
+        4,
+        "short_production_job_numbers",
+        """
+        ALTER TABLE production_runs ADD COLUMN job_number TEXT;
+
+        UPDATE production_runs AS target
+        SET job_number =
+            substr(replace(substr(target.started_at, 1, 10), '-', ''), 3, 6)
+            || '-'
+            || printf(
+                '%03d',
+                (
+                    SELECT COUNT(*)
+                    FROM production_runs AS candidate
+                    WHERE substr(candidate.started_at, 1, 10)
+                        = substr(target.started_at, 1, 10)
+                      AND (
+                          candidate.started_at < target.started_at
+                          OR (
+                              candidate.started_at = target.started_at
+                              AND candidate.run_id <= target.run_id
+                          )
+                      )
+                )
+            );
+
+        CREATE UNIQUE INDEX production_runs_job_number_unique
+            ON production_runs(job_number);
+
+        CREATE TABLE job_number_sequences (
+            work_date TEXT PRIMARY KEY,
+            last_value INTEGER NOT NULL CHECK (last_value > 0)
+        );
+
+        INSERT INTO job_number_sequences (work_date, last_value)
+        SELECT substr(started_at, 1, 10), COUNT(*)
+        FROM production_runs
+        GROUP BY substr(started_at, 1, 10);
+        """,
+        irreversible_reason=(
+            "Short job numbers are persisted operator-facing identifiers; "
+            "downgrade would discard their stable mapping."
+        ),
+    ),
 )
