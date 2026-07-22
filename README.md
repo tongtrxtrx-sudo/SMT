@@ -137,6 +137,48 @@ For validation without overwriting an existing untracked `build` or `dist`, invo
 directly with separate `--workpath` and `--distpath` directories and copy the template into that
 isolated distribution before running the same smoke test.
 
+## 入库标签打印工具
+
+仓库同时提供一个与 SMT Guard 数据库完全独立的小工具。它读取采购入库单 `.xlsx`，按中文
+表头自动识别入库单和物料明细，为每种物料生成一个独立的 60 × 40 mm Code 128 条码标签
+PDF。标签只包含稳定的商品名称、商品编号和规格，不包含入库单号、日期或数量，因此同一
+物料可以跨入库单直接复用。导入和导出都不会修改原始 Excel，也不会写入 SMT Guard 数据库。
+
+从项目环境启动，并可选地在启动时直接载入一个文件：
+
+```powershell
+uv run smt-receipt-labels
+uv run smt-receipt-labels "C:\Users\Operator\Downloads\采购入库单.xlsx"
+```
+
+界面操作只有三步：选择 Excel、标签格式和标签工作目录，核对需要生成的物料，准备当前打印。
+“标签格式”下拉框目前提供 `60 × 40 mm · Code 128 标准物料标签`，已按格式编号接入
+生成和复用判断，后续可以继续增加其他尺寸或条码类型。默认工作目录为桌面的
+`SMT物料标签`，若被删除，下次启动时会自动重新创建。
+工作目录中由工具固定管理两个子文件夹：
+
+- `标签库`：永久保存每种物料的标准标签。商品编号、名称和规格均未变化且文件仍存在时直接
+  复用，不会重复生成；内容变化时只更新对应物料的文件。
+- `当前打印`：只包含本次选中的标签。程序每次启动以及每次点击“准备当前打印”时都会自动
+  清空其中的旧文件，再把选中的标签从标签库复制进来。为防止误删，自动清理只会在带有工具
+  安全标记的固定子文件夹内执行；`标签库`不会被清空。
+
+工作目录会自动保存，下次启动继续使用。每个 PDF 只有一页，页面尺寸固定为 60 × 40 mm。
+需要同一物料打印多张时，请在 PDF 打印窗口设置打印份数，并选择“实际大小”或 100% 比例，
+避免打印驱动缩放标签。
+
+生成独立的 Windows 免安装目录：
+
+```powershell
+.\scripts\build_receipt_labels.ps1
+```
+
+可执行文件位于 `dist\SMTReceiptLabels\SMTReceiptLabels.exe`。无需显示窗口即可检查打包启动：
+
+```powershell
+.\dist\SMTReceiptLabels\SMTReceiptLabels.exe --smoke-test
+```
+
 ## Safety
 
 Automated tests use temporary files, in-memory databases, and fake audio adapters. They do not
